@@ -1,0 +1,5 @@
+---
+source: girders-json/tests/codecs.rs
+expression: "diagnostic::render_short(&e, nested)"
+---
+/server/port: expected int, found string (at line 3, column 13) [while decoding the server entry, in the configuration document]

@@ -1,0 +1,5 @@
+---
+source: girders-json/tests/codecs.rs
+expression: e.to_string()
+---
+server.port: expected int, found string (at byte 28)

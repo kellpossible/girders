@@ -1,0 +1,10 @@
+[package]
+name = "spike-codec-shape"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone: not part of the girders workspace.
+[workspace]
+
+[dependencies]

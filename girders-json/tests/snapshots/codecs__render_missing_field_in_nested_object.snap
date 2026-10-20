@@ -1,0 +1,9 @@
+---
+source: girders-json/tests/codecs.rs
+expression: "render(&cfg(), missing)"
+---
+/server: missing required field `port`
+  at line 2, column 13
+   |
+ 2 |   "server": {
+   |             ^

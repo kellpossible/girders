@@ -1,0 +1,19 @@
+[package]
+name = "esp-serde"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+
+[dependencies]
+serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+codegen-units = 1
+lto = true
+debug = false

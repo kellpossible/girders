@@ -1,0 +1,17 @@
+[package]
+name = "girders"
+description = "Bidirectional, format-agnostic serialization codecs with spans, paths and strict defaults"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["std"]
+# Only adds `HashMap` codecs; everything else is `no_std` + `alloc`.
+std = []
+
+[dependencies]
+
+[lints]
+workspace = true

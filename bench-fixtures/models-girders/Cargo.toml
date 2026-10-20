@@ -1,0 +1,18 @@
+[package]
+name = "models-girders"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone: compile-time fixture, not part of the workspace.
+[workspace]
+
+[features]
+decode-only = []
+
+[dependencies]
+girders = { path = "../../girders" }
+girders-json = { path = "../../girders-json" }
+
+[profile.release]
+debug = false

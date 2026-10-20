@@ -1,0 +1,18 @@
+[package]
+name = "models-serde"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone: compile-time fixture, not part of the workspace.
+[workspace]
+
+[features]
+decode-only = []
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+[profile.release]
+debug = false

@@ -1,0 +1,101 @@
+[tools]
+rust = "1.96.0"
+hyperfine = "2.0.0"
+"cargo:gungraun-runner" = "0.20.0"
+# Valgrind is a system package (apt install valgrind); `bench` checks for it.
+
+[tasks.ci]
+description = "Format check, lint, tests, examples, no_std builds"
+run = [
+  "mise run fmt-check",
+  "mise run clippy",
+  "mise run test",
+  "mise run examples",
+  "mise run no-std",
+]
+
+[tasks.test]
+description = "All tests (conformance needs the JSONTestSuite fixtures)"
+depends = ["fetch-jsontestsuite"]
+run = "cargo test --workspace --exclude girders-benches && cargo test -p girders-benches --release --lib"
+
+[tasks.examples]
+description = "Run the 7 ported examples (they assert their own output)"
+run = "for e in 01_record 02_tagged_union 03_collections 04_validation 05_error_reporting 06_dynamic_value 07_pretty_printing; do cargo run -q -p girders-json --example $e || exit 1; done"
+
+[tasks.no-std]
+description = "Build both crates without std for Cortex-M and ESP32-C3 (RISC-V)"
+run = [
+  "rustup target add thumbv7em-none-eabihf riscv32imc-unknown-none-elf",
+  "cargo build -p girders -p girders-json --no-default-features --target thumbv7em-none-eabihf",
+  "cargo build -p girders -p girders-json --no-default-features --target riscv32imc-unknown-none-elf",
+]
+
+[tasks.fmt]
+run = "cargo fmt --all"
+
+[tasks.fmt-check]
+run = "cargo fmt --all --check"
+
+[tasks.clippy]
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks.fetch-jsontestsuite]
+description = "Download JSONTestSuite (pinned) for girders-json conformance tests"
+run = """
+set -eu
+COMMIT=1ef36fa01286573e846ac449e8683f8833c5b26a
+DEST="{{config_root}}/girders-json/tests/fixtures/JSONTestSuite-${COMMIT}"
+if [ -d "$DEST/test_parsing" ]; then exit 0; fi
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+curl -fL "https://github.com/nst/JSONTestSuite/archive/${COMMIT}.tar.gz" -o "$TMP/suite.tar.gz"
+tar -xzf "$TMP/suite.tar.gz" -C "$TMP"
+mkdir -p "$DEST"
+mv "$TMP/JSONTestSuite-${COMMIT}/test_parsing" "$TMP/JSONTestSuite-${COMMIT}/LICENSE" "$DEST/"
+"""
+
+[tasks.fetch-bench-data]
+description = "Download the json-benchmark corpus (pinned; Apache-2.0 repo)"
+run = """
+set -eu
+SHA=17b13dd2d7a5e5fdd5594e847077932f955b5e2b
+DEST="{{config_root}}/benches/data"
+mkdir -p "$DEST"
+for f in canada.json citm_catalog.json twitter.json; do
+  [ -f "$DEST/$f" ] || curl -fsSL "https://raw.githubusercontent.com/serde-rs/json-benchmark/$SHA/data/$f" -o "$DEST/$f"
+done
+"""
+
+[tasks.bench]
+description = "Runtime benchmarks (gungraun: instructions + DHAT). Optional FILTER arg, e.g. '*decode_typed*'"
+depends = ["fetch-bench-data"]
+run = """
+command -v valgrind >/dev/null || { echo "valgrind not found (apt install valgrind)"; exit 1; }
+cargo bench -p girders-benches --bench runtime -- {{arg(name="filter", default="")}}
+"""
+
+[tasks."bench:compile"]
+description = "Compile-time + binary-size comparison of the serde and girders model fixtures"
+depends = ["fetch-bench-data"]
+dir = "{{config_root}}/bench-fixtures"
+run = """
+set -eu
+for v in serde girders; do (cd models-$v && cargo build -q && cargo build -q --release); done
+hyperfine -N --warmup 1 --runs 5 \
+  --prepare 'cargo clean -q -p models-serde --manifest-path models-serde/Cargo.toml' -n serde-crate-debug 'cargo build -q --manifest-path models-serde/Cargo.toml' \
+  --prepare 'cargo clean -q -p models-girders --manifest-path models-girders/Cargo.toml' -n girders-crate-debug 'cargo build -q --manifest-path models-girders/Cargo.toml'
+hyperfine -N --warmup 1 --runs 5 \
+  --prepare 'cargo clean -q --release -p models-serde --manifest-path models-serde/Cargo.toml' -n serde-crate-release 'cargo build -q --release --manifest-path models-serde/Cargo.toml' \
+  --prepare 'cargo clean -q --release -p models-girders --manifest-path models-girders/Cargo.toml' -n girders-crate-release 'cargo build -q --release --manifest-path models-girders/Cargo.toml'
+hyperfine -N --warmup 1 --runs 8 \
+  --prepare 'touch models-serde/src/twitter.rs' -n serde-incremental 'cargo build -q --manifest-path models-serde/Cargo.toml' \
+  --prepare 'touch models-girders/src/twitter.rs' -n girders-incremental 'cargo build -q --manifest-path models-girders/Cargo.toml'
+hyperfine -N --runs 3 \
+  --prepare 'cargo clean -q --manifest-path models-serde/Cargo.toml' -n serde-full-debug 'cargo build -q --manifest-path models-serde/Cargo.toml' \
+  --prepare 'cargo clean -q --manifest-path models-girders/Cargo.toml' -n girders-full-debug 'cargo build -q --manifest-path models-girders/Cargo.toml'
+hyperfine -N --runs 3 \
+  --prepare 'cargo clean -q --manifest-path models-serde/Cargo.toml' -n serde-full-release 'cargo build -q --release --manifest-path models-serde/Cargo.toml' \
+  --prepare 'cargo clean -q --manifest-path models-girders/Cargo.toml' -n girders-full-release 'cargo build -q --release --manifest-path models-girders/Cargo.toml'
+for v in serde girders; do echo "$v release binary: $(stat -c %s models-$v/target/release/main) bytes"; done
+"""

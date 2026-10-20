@@ -1,0 +1,15 @@
+---
+source: girders-json/tests/codecs.rs
+expression: "girders_json::encode_pretty(&v, &value::<Ordered>(), \"  \")"
+---
+{
+  "name": "prod",
+  "ports": [
+    8080,
+    9090
+  ],
+  "meta": {
+    "tls": true
+  },
+  "tags": []
+}

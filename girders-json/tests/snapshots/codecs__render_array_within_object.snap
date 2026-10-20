@@ -1,0 +1,9 @@
+---
+source: girders-json/tests/codecs.rs
+expression: "render(&m, matrix)"
+---
+/matrix/2/2: expected int, found string
+  at line 5, column 12
+   |
+ 5 |     [4, 5, "x"]
+   |            ^

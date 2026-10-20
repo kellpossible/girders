@@ -1,0 +1,9 @@
+---
+source: girders-json/tests/codecs.rs
+expression: "render(&list(server()), servers)"
+---
+/2/port: expected int, found string
+  at line 4, column 26
+   |
+ 4 |   { "host": "c", "port": "oops" }
+   |                          ^

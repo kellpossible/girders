@@ -1,0 +1,20 @@
+[package]
+name = "esp-girders"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+
+[dependencies]
+girders = { path = "../../../girders", default-features = false }
+girders-json = { path = "../../../girders-json", default-features = false }
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+codegen-units = 1
+lto = true
+debug = false

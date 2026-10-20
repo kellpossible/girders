@@ -1,0 +1,22 @@
+[package]
+name = "girders-benches"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+girders = { path = "../girders" }
+girders-json = { path = "../girders-json" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+indexmap = "2.14.2"
+
+[dev-dependencies]
+gungraun = "0.20.0"
+
+[[bench]]
+name = "runtime"
+harness = false
+
+[lints]
+workspace = true

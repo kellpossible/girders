@@ -1,0 +1,9 @@
+---
+source: girders-json/tests/codecs.rs
+expression: "render(&list(i64()), \"[1, 2, ]\")"
+---
+/2: expected int, found `]`
+  at line 1, column 8
+   |
+ 1 | [1, 2, ]
+   |        ^

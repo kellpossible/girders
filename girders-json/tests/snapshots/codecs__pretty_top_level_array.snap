@@ -1,0 +1,16 @@
+---
+source: girders-json/tests/codecs.rs
+expression: "girders_json::encode_pretty(&v, &value::<Ordered>(), \"  \")"
+---
+[
+  1,
+  [
+    2,
+    3
+  ],
+  {
+    "k": 4
+  },
+  {},
+  []
+]
