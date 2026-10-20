@@ -205,6 +205,29 @@ Tried and dropped:
   function item, to keep outer types small): +0.8% debug, −1% release,
   which is noise.
 
+### Encoding strategy (N10)
+
+Decoding calls child codecs out of line and through a `dyn` reader.
+The same two techniques were tried for encoding, separately and
+together. Encode columns are runtime instructions per document;
+binary text is the `models-girders` release binary; compile columns
+are rustc instructions for the model crate.
+
+| Encoding | canada | citm | twitter | Binary text | Debug | Release |
+|---|---:|---:|---:|---:|---:|---:|
+| Inline, generic serializer (**kept**) | 102.4 M | 11.02 M | 10.37 M | 725.5 KB | 9.03 G | 24.24 G |
+| Out-of-line child calls only | +2.2% | +6.2% | +1.9% | −0.4% | +0.9% | −2.5% |
+| `dyn` serializer only | +4.1% | +4.8% | +0.3% | −1.5% | +1.3% | −4.1% |
+| Both | +5.9% | +11.8% | +1.3% | −2.0% | +1.3% | −5.6% |
+
+Encoding gains much less than decoding did: encoding a record is
+already a short sequence of calls, with none of decoding's slots,
+missing-field checks or error recovery to share. Every variant makes
+debug builds slightly slower, and debug build time takes priority, so
+encoding stays inline. A `dyn` serializer would help more in code that
+encodes to several writer types (each codec is compiled once per
+serializer type); this fixture encodes only to `Vec`.
+
 ## Ergonomics (from writing the twitter and citm models)
 
 - **Wide records:** the 16-element tuple cap means nesting

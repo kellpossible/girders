@@ -1005,7 +1005,7 @@ These were implemented as recommended, and the evidence supports them.
 | N6 | Float formatting with zero dependencies | canada encode is 4.6× serde, almost all in core's `{:?}` float formatting. Options: accept; port a shortest round-trip float formatter (Ryū is Apache-2.0/BSL-1.0 but large); or allow one dependency (`ryu` or `zmij`; would need researching). |
 | N7 | `optional_field` writes `null` for `None` (Gleam and serde parity) | `.skip_none()` omits the key instead. Keep `null` as the default? |
 | N8 | Remaining decode gap of 1.3–1.9× | Next levers: (a) dispatch records by key length or first byte instead of a linear compare chain; (b) a whole-buffer fast path for scanning slices; (c) number lexing without per-byte `peek`. Worth pursuing in a throwaway, or stop here? |
-| N10 | Encoding strategy | Decoding is compact; encoding is still fully inlined (generic over the serializer). A compact encoder would use the same approach (out-of-line child calls, `dyn Serializer`) for the same size and build-time gains. Do it? |
+| ~~N10~~ | Encoding strategy | **Decided: encoding stays inline (generic over the serializer).** Out-of-line child calls, a `dyn` serializer, and both together were measured (RESULTS.md, "Encoding strategy"). They save at most 5.6% of release compile instructions and 2% of binary text, but every variant makes debug builds 0.9–1.3% slower and encoding up to 12% slower. Debug build time is the priority. |
 | N9 | Gleam comparison | Not run. The corpus is plain JSON in `benches/data`, ready for the Gleam side. |
 
 ## 14. Where the implementation departs from the text
