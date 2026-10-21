@@ -21,7 +21,9 @@ pub mod codec;
 pub mod collections;
 pub mod context;
 pub mod error;
+pub mod half;
 pub mod number;
+pub mod packed;
 pub mod reader;
 pub mod record;
 pub mod recursive;
@@ -44,6 +46,7 @@ pub mod prelude {
     pub use crate::collections::*;
     pub use crate::context::{DecodeContext, DecodeOptions, EncodeContext};
     pub use crate::error::{DecodeError, PathSegment, Problem};
+    pub use crate::packed::packed;
     pub use crate::reader::{Kind, Reader};
     pub use crate::record::{
         Duplicates, Fields, FieldsFor, RecordCodec, extras, field, field_default, fields_for,

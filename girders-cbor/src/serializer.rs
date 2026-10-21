@@ -3,10 +3,11 @@
 //! the value exactly. Containers of unknown length use indefinite-length
 //! encoding.
 
-use crate::{bignum, half};
+use crate::bignum;
 use alloc::vec::Vec;
 use core::convert::Infallible;
 use girders::Serializer;
+use girders::half;
 
 pub struct CborSerializer {
     out: Vec<u8>,
@@ -186,6 +187,10 @@ impl Serializer for CborSerializer {
         self.head(2, v.len() as u64);
         self.out.extend_from_slice(v);
         Ok(())
+    }
+
+    fn supports_tags(&self) -> bool {
+        true
     }
 
     fn write_tag(&mut self, tag: u64) -> Result<(), Infallible> {

@@ -4,10 +4,11 @@
 //! misplaced break codes, bad indefinite-length strings and truncated
 //! input are all syntax errors. Text strings must be valid UTF-8.
 
-use crate::{bignum, half};
+use crate::bignum;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use girders::half;
 use girders::{DecodeError, Kind, Number, Problem, Reader, Span};
 
 type CborError = DecodeError<Span>;

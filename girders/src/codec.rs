@@ -272,6 +272,51 @@ impl Encoder for F32Codec {
     }
 }
 
+/// A half-precision float, held as the `f32` with the same value.
+///
+/// Decoding rounds to the nearest half (ties to even), as converting to
+/// half precision does; numbers beyond ±65504 are `OutOfRange`. Encoding
+/// rounds the same way, so CBOR writes 2-byte floats, and JSON writes the
+/// half's value.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct F16Codec;
+
+/// See [`F16Codec`].
+pub const fn f16() -> F16Codec {
+    F16Codec
+}
+
+impl Decoder for F16Codec {
+    type Output = f32;
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        _cx: &mut DecodeContext,
+    ) -> DecodeResult<f32, R> {
+        let start = r.here();
+        let v = r.read_f64()?;
+        let half = crate::half::f16_to_f64(crate::half::f64_to_f16(v));
+        if v.is_finite() && !half.is_finite() {
+            return Err(DecodeError::at(
+                Problem::OutOfRange("number does not fit a half-precision float".into()),
+                start,
+            ));
+        }
+        Ok(half as f32)
+    }
+}
+impl Encoder for F16Codec {
+    type Input = f32;
+    fn encode<S: Serializer + ?Sized>(
+        &self,
+        v: &f32,
+        s: &mut S,
+        _cx: &mut EncodeContext,
+    ) -> Result<(), S::Error> {
+        s.write_f32(crate::half::f16_to_f64(crate::half::f64_to_f16(*v as f64)) as f32)
+    }
+}
+
 /// Integer codecs read through `i64`/`u64` and range-check.
 macro_rules! int_codec {
     ($name:ident, $fn:ident, $t:ty, $read:ident, $write:ident, $wide:ty) => {

@@ -839,7 +839,7 @@ change nothing.
 | Addition | Default for formats without it | CBOR |
 |---|---|---|
 | `Kind::Bytes`, `read_bytes`, `write_bytes` | An array of numbers 0–255 | Byte strings |
-| `Kind::Tag`, `supports_tags`, `read_tag`, `write_tag` | No tags: `tagged(n, c)` neither checks nor writes them | Tags; `tagged(n, c)` requires tag `n` |
+| `Kind::Tag`, `supports_tags` (reader and serializer), `read_tag`, `write_tag` | No tags: `tagged(n, c)` neither checks nor writes them | Tags; `tagged(n, c)` requires tag `n` |
 | `Kind::Simple`, `read_simple`, `write_simple` | Written as `null` | `undefined` and other simple values |
 | `object_next_entry` (reader) | `Problem::Unsupported` | Keys of any kind, read as values |
 | `object_key_value` (serializer, required) | JSON: strings and integers (quoted) only | Keys of any kind |
@@ -883,7 +883,23 @@ The JSON serializer's key mode costs up to 1% of encode instructions
 - `girders_json::Value` also round-trips through CBOR, since it only uses
   the JSON-shaped parts of the contract.
 
-### 10.5 Tests
+### 10.5 Half floats and typed arrays
+
+- **`f16()`** holds a half-precision value as an `f32`. Decoding and
+  encoding round to the nearest half (ties to even); numbers beyond
+  ±65504 are out of range. CBOR writes it in 2 bytes plus the type byte.
+  The conversions live in `girders::half`, with no dependencies, since
+  Rust has no stable `f16`.
+- **`packed(element)`**: a `Vec` of numbers. With a format that has tags
+  it is an RFC 8746 typed array, a tag over a byte string with no
+  per-element encoding. It is written little-endian, and either byte
+  order is read, as is a plain array. JSON uses a plain array.
+  - Elements: every integer type up to 64 bits, plus `f16()`, `f32()`
+    and `f64()`.
+  - 1,000 halves: 2,005 bytes packed, 3,003 as a plain CBOR array.
+  - 1,000 integers from 0 to 99: 1,005 bytes packed, 1,763 as an array.
+
+### 10.6 Tests
 
 - RFC 8949 Appendix A (81 examples) and Appendix F (94 malformed inputs)
   are vendored from the RFC under its Simplified BSD License, in
@@ -900,10 +916,10 @@ The JSON serializer's key mode costs up to 1% of encode instructions
 - The three json-benchmark models round-trip JSON → CBOR → model, and
   Python's `cbor2` reads the output as the same data.
 
-### 10.6 Not yet
+### 10.7 Not yet
 
 - Streaming sources (`io::Read`, push).
-- Typed arrays (RFC 8746) and an `f16` codec.
+- Multi-dimensional typed arrays (RFC 8746 tags 40 and 1040).
 - Typed map keys (N3).
 - A serde-based CBOR baseline for benchmarks: this needs dependency
   research.

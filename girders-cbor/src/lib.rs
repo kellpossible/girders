@@ -21,7 +21,6 @@
 extern crate alloc;
 
 mod bignum;
-pub mod half;
 pub mod reader;
 pub mod serializer;
 pub mod value;

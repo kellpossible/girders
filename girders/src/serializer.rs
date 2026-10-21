@@ -28,6 +28,10 @@ pub trait Serializer {
         }
         self.end_array()
     }
+    /// Whether the format has tags (see [`Serializer::write_tag`]).
+    fn supports_tags(&self) -> bool {
+        false
+    }
     /// Tag the value written next. Formats without tags drop it.
     fn write_tag(&mut self, _tag: u64) -> Result<(), Self::Error> {
         Ok(())
