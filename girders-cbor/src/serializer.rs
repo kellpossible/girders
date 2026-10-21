@@ -1,7 +1,7 @@
 //! CBOR writer producing RFC 8949 preferred serialization: the shortest
-//! head for every argument, and the shortest float width that represents
-//! the value exactly. Containers of unknown length use indefinite-length
-//! encoding.
+//! head for every argument, and (by default, see [`Floats`]) the shortest
+//! float width that represents the value exactly. Containers of unknown
+//! length use indefinite-length encoding.
 
 use crate::bignum;
 use alloc::vec::Vec;
@@ -9,10 +9,30 @@ use core::convert::Infallible;
 use girders::Serializer;
 use girders::half;
 
+/// How floats are written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Floats {
+    /// The shortest of half, single and double precision that holds the
+    /// value exactly: RFC 8949 preferred serialization.
+    #[default]
+    Shortest,
+    /// The width of the Rust type: `f32` as single, `f64` as double. Some
+    /// decoders (cbor4ii's serde support, for one) require a field's
+    /// float to arrive at exactly its type's width.
+    Declared,
+}
+
+/// Choices for [`CborSerializer`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EncodeOptions {
+    pub floats: Floats,
+}
+
 pub struct CborSerializer {
     out: Vec<u8>,
     /// For each open container: whether it has indefinite length.
     open: Vec<bool>,
+    options: EncodeOptions,
 }
 
 impl Default for CborSerializer {
@@ -23,9 +43,14 @@ impl Default for CborSerializer {
 
 impl CborSerializer {
     pub fn new() -> Self {
+        Self::with_options(EncodeOptions::default())
+    }
+
+    pub fn with_options(options: EncodeOptions) -> Self {
         CborSerializer {
             out: Vec::new(),
             open: Vec::new(),
+            options,
         }
     }
 
@@ -54,16 +79,24 @@ impl CborSerializer {
         }
     }
 
+    fn single(&mut self, f: f32) {
+        self.out.push(0xfa);
+        self.out.extend_from_slice(&f.to_bits().to_be_bytes());
+    }
+
+    fn double(&mut self, v: f64) {
+        self.out.push(0xfb);
+        self.out.extend_from_slice(&v.to_bits().to_be_bytes());
+    }
+
     fn float(&mut self, v: f64) {
         if let Some(bits) = half::f64_to_f16_exact(v) {
             self.out.push(0xf9);
             self.out.extend_from_slice(&bits.to_be_bytes());
         } else if let Some(f) = half::f64_to_f32_exact(v) {
-            self.out.push(0xfa);
-            self.out.extend_from_slice(&f.to_bits().to_be_bytes());
+            self.single(f);
         } else {
-            self.out.push(0xfb);
-            self.out.extend_from_slice(&v.to_bits().to_be_bytes());
+            self.double(v);
         }
     }
 
@@ -141,12 +174,18 @@ impl Serializer for CborSerializer {
     }
 
     fn write_f64(&mut self, v: f64) -> Result<(), Infallible> {
-        self.float(v);
+        match self.options.floats {
+            Floats::Shortest => self.float(v),
+            Floats::Declared => self.double(v),
+        }
         Ok(())
     }
 
     fn write_f32(&mut self, v: f32) -> Result<(), Infallible> {
-        self.float(v as f64);
+        match self.options.floats {
+            Floats::Shortest => self.float(v as f64),
+            Floats::Declared => self.single(v),
+        }
         Ok(())
     }
 

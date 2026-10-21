@@ -98,6 +98,57 @@ mod cbor {
         (girders_json::encode(&v, codec).len(), cbor.len())
     }
 
+    /// The serde CBOR libraries read girders' output as the same values,
+    /// and girders reads theirs. ciborium writes serde's `()` as `null`, as
+    /// girders' `null()` does; cbor4ii writes an empty array, so it can't
+    /// exchange models with unit fields (twitter's `geo`, citm's `logo`, ...):
+    /// `cbor4ii_units_agree` says whether the model has none.
+    fn interop<T, C>(file: &str, codec: &C, cbor4ii_units_agree: bool)
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+        C: girders::Codec<Output = T>,
+    {
+        let v = girders_json::decode(&data(file), codec).unwrap();
+        let ours = girders_cbor::encode(&v, codec);
+        let by_ciborium: T = ciborium::from_reader(&ours[..]).unwrap();
+        assert_eq!(by_ciborium, v, "ciborium reading girders ({file})");
+        let mut theirs = Vec::new();
+        ciborium::into_writer(&v, &mut theirs).unwrap();
+        // Both write preferred serialization, byte for byte.
+        assert_eq!(ours, theirs, "girders and ciborium bytes ({file})");
+        assert_eq!(
+            girders_cbor::decode(&theirs, codec).unwrap(),
+            v,
+            "girders reading ciborium ({file})"
+        );
+
+        // cbor4ii wants each float at its field's declared width.
+        let declared = girders_cbor::EncodeOptions {
+            floats: girders_cbor::Floats::Declared,
+        };
+        let ours_declared = girders_cbor::encode_with(&v, codec, declared);
+        let theirs4 = cbor4ii::serde::to_vec(Vec::new(), &v).unwrap();
+        let by_cbor4ii = cbor4ii::serde::from_slice::<T>(&ours_declared);
+        let reading_cbor4ii = girders_cbor::decode(&theirs4, codec);
+        if cbor4ii_units_agree {
+            assert_eq!(by_cbor4ii.unwrap(), v, "cbor4ii reading girders ({file})");
+            assert_eq!(
+                reading_cbor4ii.unwrap(),
+                v,
+                "girders reading cbor4ii ({file})"
+            );
+        } else {
+            assert!(by_cbor4ii.is_err() && reading_cbor4ii.is_err());
+            assert_eq!(cbor4ii::serde::to_vec(Vec::new(), &()).unwrap(), [0x80]);
+        }
+        println!(
+            "{file}: girders {} bytes, ciborium {}, cbor4ii {}",
+            ours.len(),
+            theirs.len(),
+            theirs4.len()
+        );
+    }
+
     #[test]
     fn models_round_trip_through_cbor() {
         let (j, c) = through_cbor("twitter.json", &twitter::codec());
@@ -106,5 +157,12 @@ mod cbor {
         println!("citm: JSON {j} bytes, CBOR {c}");
         let (j, c) = through_cbor("canada.json", &canada::codec());
         println!("canada: JSON {j} bytes, CBOR {c}");
+    }
+
+    #[test]
+    fn serde_cbor_libraries_interoperate() {
+        interop("twitter.json", &twitter::codec(), false);
+        interop("citm_catalog.json", &citm::codec(), false);
+        interop("canada.json", &canada::codec(), true);
     }
 }

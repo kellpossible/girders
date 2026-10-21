@@ -26,7 +26,7 @@ pub mod serializer;
 pub mod value;
 
 pub use reader::{CborCheckpoint, CborReader};
-pub use serializer::CborSerializer;
+pub use serializer::{CborSerializer, EncodeOptions, Floats};
 pub use value::{Value, ValueCodec, value};
 
 use alloc::vec::Vec;
@@ -66,7 +66,15 @@ pub fn decode_with<C: Decoder + ?Sized>(
 
 /// Encode with preferred serialization.
 pub fn encode<C: Encoder + ?Sized>(v: &C::Input, codec: &C) -> Vec<u8> {
-    let mut s = CborSerializer::new();
+    encode_with(v, codec, EncodeOptions::default())
+}
+
+pub fn encode_with<C: Encoder + ?Sized>(
+    v: &C::Input,
+    codec: &C,
+    options: EncodeOptions,
+) -> Vec<u8> {
+    let mut s = CborSerializer::with_options(options);
     match codec.encode(v, &mut s, &mut EncodeContext::new()) {
         Ok(()) => s.into_inner(),
         Err(never) => match never {},

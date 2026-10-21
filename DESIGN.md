@@ -869,7 +869,10 @@ The JSON serializer's key mode costs up to 1% of encode instructions
 
 - Preferred serialization: the shortest head for every length and
   integer, and the shortest float width that is exact (half, single or
-  double).
+  double). The output is byte-for-byte identical to `ciborium`'s.
+- `EncodeOptions { floats: Floats::Declared }` writes each float at its
+  Rust type's width instead. This is for decoders that require that
+  width, such as `cbor4ii`'s serde support.
 - Number text becomes an integer, a bignum, or a decimal fraction (tag 4).
 - Containers of unknown length are written with indefinite length.
 
@@ -921,8 +924,6 @@ The JSON serializer's key mode costs up to 1% of encode instructions
 - Streaming sources (`io::Read`, push).
 - Multi-dimensional typed arrays (RFC 8746 tags 40 and 1040).
 - Typed map keys (N3).
-- A serde-based CBOR baseline for benchmarks: this needs dependency
-  research.
 
 ---
 

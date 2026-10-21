@@ -231,22 +231,38 @@ serializer type); this fixture encodes only to `Vec`.
 ## CBOR (girders-cbor)
 
 The same typed models, encoded as CBOR instead of JSON. Runtime figures are
-instructions per document (Callgrind, `cbor` group). The JSON columns are
-girders' own JSON numbers from the runtime table above, for comparison.
-There is no serde CBOR baseline yet; that needs dependency research
-(`ciborium` or `minicbor`).
+instructions per document (Callgrind, `cbor` group). The serde baselines are
+dev-dependencies of the benches crate only:
 
-| Document | Decode CBOR | Decode JSON | Encode CBOR | Encode JSON |
+- `ciborium` 0.2.2: the common serde choice, with 70M recent downloads,
+  but no release since January 2024.
+- `cbor4ii` 1.2.4: actively maintained and performance-focused.
+
+`ciborium` decodes girders' bytes, which are identical to its own;
+`cbor4ii` decodes its own encoding (see "Interoperability" below).
+
+| Document | girders | ciborium | cbor4ii | girders JSON |
 |---|---:|---:|---:|---:|
-| canada | 43.5 M | 102.2 M | 11.8 M | 102.4 M |
-| citm | 24.0 M | 34.2 M | 4.12 M | 11.0 M |
-| twitter | 13.4 M | 16.9 M | 2.47 M | 10.4 M |
+| decode canada | 43.5 M | 34.9 M | 9.07 M | 102.2 M |
+| decode citm | 24.0 M | 15.9 M | 8.84 M | 34.2 M |
+| decode twitter | 13.4 M | 10.6 M | 7.06 M | 16.9 M |
+| encode canada | 12.7 M | 16.9 M | 2.08 M | 102.4 M |
+| encode citm | 4.12 M | 5.13 M | 2.52 M | 11.0 M |
+| encode twitter | 2.47 M | 3.14 M | 2.75 M | 10.4 M |
 
-- **Decoding CBOR** costs 21–57% fewer instructions than decoding JSON.
-  Numbers dominate the saving: canada's floats are read as raw bits
-  instead of parsed.
-- **Encoding CBOR** is 3–9× cheaper. No float formatting is involved:
-  canada's floats are written as 4 or 8 raw bytes.
+- **Encoding:** girders beats `ciborium` on all three documents, and
+  `cbor4ii` on twitter. On canada, `cbor4ii` writes each `f32` as 4 raw
+  bytes, while preferred serialization first checks whether a half float
+  would be exact.
+- **Decoding:** girders takes 1.3–1.5× `ciborium`'s instructions and
+  1.9–4.8× `cbor4ii`'s. The gap is per value: canada costs girders about
+  390 instructions per float against `cbor4ii`'s 80. This is the same
+  per-value overhead as N8's JSON decode gap, through the reader trait
+  object and out-of-line child decodes, rather than anything specific
+  to CBOR.
+- **Against girders' own JSON**, decoding CBOR takes 21–57% fewer
+  instructions and encoding 3–9× fewer. No float formatting or parsing is
+  involved.
 
 **Wire size** (bytes), written by the models:
 
@@ -259,10 +275,24 @@ There is no serde CBOR baseline yet; that needs dependency research
 canada's model uses `f32` coordinates, following json-benchmark, so its
 floats are written as single precision (5 bytes each).
 
-**Interoperability.** Python's `cbor2` decodes all three outputs. citm
-equals its source JSON exactly. canada differs only by the model's `f32`
-narrowing. twitter differs only where the model writes absent optional
-fields as `null`.
+**Interoperability.**
+
+- **`ciborium`:** both libraries write preferred serialization, and
+  their output is byte-for-byte identical on all three documents. Each
+  reads the other's.
+- **`cbor4ii`:** two conventions differ.
+  - serde's `()` is an empty array in `cbor4ii`, but `null` in girders'
+    `null()` and in `ciborium`. Models with unit fields (twitter, citm)
+    therefore can't be exchanged with `cbor4ii`.
+  - `cbor4ii` reads a float only at its field's declared width, so it
+    rejects preferred serialization's shorter floats (canada). girders
+    offers `Floats::Declared` for this; with it, canada interoperates both
+    ways.
+- **Python's `cbor2`** decodes all three outputs.
+  - citm equals its source JSON exactly.
+  - canada differs only by the model's `f32` narrowing.
+  - twitter differs only where the model writes absent optional fields
+    as `null`.
 
 **Cost to JSON.** The JSON serializer's new key mode (for `Value` maps
 with non-string keys) costs 0.4% (canada, twitter) to 1.0% (citm) of
