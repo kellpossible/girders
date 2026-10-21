@@ -245,11 +245,11 @@ dependencies = [
 
 [[package]]
 name = "girders"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "girders-benches"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "cbor4ii",
  "ciborium",
@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "girders-cbor"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "girders",
  "girders-json",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "girders-json"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "girders",
  "insta",

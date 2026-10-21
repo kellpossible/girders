@@ -68,6 +68,26 @@ Measurements, including where the speed gap comes from, are in
 [RESULTS.md](RESULTS.md); the design and its open questions are in
 [DESIGN.md](DESIGN.md).
 
+## Using it
+
+Not on crates.io yet, and still changing; depend on the git repository.
+Rust 1.88 or later.
+
+```toml
+[dependencies]
+girders = { git = "https://github.com/kellpossible/girders", branch = "main" }
+girders-json = { git = "https://github.com/kellpossible/girders", branch = "main" }
+# girders-cbor = { git = "https://github.com/kellpossible/girders", branch = "main" }
+```
+
+`Cargo.lock` pins the exact commit; `cargo update -p girders` moves to the
+latest.
+
+Before 1.0, minor versions may change the interface. Most public enums
+and option structs are `#[non_exhaustive]`, so additions to them don't
+break code. The `Reader` and `Serializer` traits, for writing your own
+format, are the least settled part.
+
 ## Layout
 
 - `girders/`: format-agnostic codecs, records, unions, versioning.
