@@ -97,8 +97,9 @@ fn decode_value<R: Reader + ?Sized>(
         }
         Kind::Array => {
             r.begin_array()?;
+            let capacity = girders::reader::cautious_capacity::<Value>(r.size_hint());
             let items = cx.nested(|cx| {
-                let mut items = Vec::new();
+                let mut items = Vec::with_capacity(capacity);
                 let mut first = true;
                 while r.array_has_next(first)? {
                     first = false;
@@ -111,8 +112,9 @@ fn decode_value<R: Reader + ?Sized>(
         }
         Kind::Object => {
             r.begin_object()?;
+            let capacity = girders::reader::cautious_capacity::<(Value, Value)>(r.size_hint());
             let entries = cx.nested(|cx| {
-                let mut entries = Vec::new();
+                let mut entries = Vec::with_capacity(capacity);
                 let mut first = true;
                 while r.object_next_entry(first)? {
                     first = false;

@@ -124,6 +124,13 @@ pub trait Reader {
     }
 
     fn begin_array(&mut self) -> DecodeResult<(), Self>;
+    /// How many items (arrays) or entries (objects) the container just
+    /// opened has, if the format says up front: CBOR's definite lengths,
+    /// never JSON. Only a hint for preallocation, and untrusted: size
+    /// allocations with [`cautious_capacity`].
+    fn size_hint(&self) -> Option<usize> {
+        None
+    }
     /// `true` if another element follows (consuming any separator);
     /// `false` at the closing delimiter. `first` says whether no element
     /// has been read yet.
@@ -161,4 +168,15 @@ pub fn mismatch<R: Reader + ?Sized>(r: &mut R, expected: &'static str) -> Decode
         Err(e) => return e,
     };
     DecodeError::at(crate::Problem::mismatch(expected, found), r.here())
+}
+
+/// The most a decoder preallocates from a [`Reader::size_hint`]: 1 MiB of
+/// elements, as serde does. A length is only a claim until the items
+/// arrive, so a forged one can't force a huge allocation.
+const MAX_PREALLOCATION: usize = 1024 * 1024;
+
+/// A capacity for `T`s from a size hint, capped at 1 MiB of elements.
+pub fn cautious_capacity<T>(hint: Option<usize>) -> usize {
+    let per_element = core::mem::size_of::<T>().max(1);
+    hint.map_or(0, |n| n.min(MAX_PREALLOCATION / per_element))
 }

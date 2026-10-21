@@ -95,8 +95,9 @@ impl<C: Decoder> Decoder for List<C> {
         cx: &mut DecodeContext,
     ) -> DecodeResult<Self::Output, R> {
         r.begin_array()?;
+        let capacity = crate::reader::cautious_capacity::<C::Output>(r.size_hint());
         cx.nested(|cx| {
-            let mut out = Vec::new();
+            let mut out = Vec::with_capacity(capacity);
             let mut errs = Collector::new();
             let mut first = true;
             let mut i = 0;

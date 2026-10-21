@@ -78,6 +78,13 @@ impl Object {
         Self::default()
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        Object {
+            entries: Vec::with_capacity(capacity),
+            extra: None,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -357,8 +364,9 @@ fn decode_value<R: Reader + ?Sized>(r: &mut R, cx: &mut DecodeContext) -> Decode
         }
         Kind::Array => {
             r.begin_array()?;
+            let capacity = girders::reader::cautious_capacity::<Value>(r.size_hint());
             let items = cx.nested(|cx| {
-                let mut items = Vec::new();
+                let mut items = Vec::with_capacity(capacity);
                 let mut first = true;
                 while r.array_has_next(first)? {
                     first = false;
@@ -378,8 +386,9 @@ fn decode_value<R: Reader + ?Sized>(r: &mut R, cx: &mut DecodeContext) -> Decode
         }
         Kind::Object => {
             r.begin_object()?;
+            let capacity = girders::reader::cautious_capacity::<Entry>(r.size_hint());
             let m = cx.nested(|cx| {
-                let mut m = Object::new();
+                let mut m = Object::with_capacity(capacity);
                 let mut first = true;
                 let mut key = String::new();
                 while r.object_next_key(first, &mut key)? {

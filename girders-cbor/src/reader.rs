@@ -701,6 +701,13 @@ impl<S: Source> Reader for CborReader<S> {
         self.open(4, "array")
     }
 
+    fn size_hint(&self) -> Option<usize> {
+        match self.stack.last() {
+            Some(Frame::Definite(n)) => usize::try_from(*n).ok(),
+            _ => None,
+        }
+    }
+
     fn array_has_next(&mut self, _first: bool) -> CborResult<bool> {
         self.has_next()
     }

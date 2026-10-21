@@ -490,12 +490,25 @@ fn encode_cbor4ii_twitter(v: twitter::Twitter) -> Vec<u8> {
     black_box(cbor4ii::serde::to_vec(Vec::new(), black_box(&v)).unwrap())
 }
 
+#[library_benchmark]
+#[benches::corpus(setup = cbor_of, args = ["canada.json", "citm_catalog.json", "twitter.json"])]
+fn decode_cbor_value(bytes: Vec<u8>) -> girders_cbor::Value {
+    black_box(girders_cbor::decode(black_box(&bytes), &girders_cbor::value()).unwrap())
+}
+
+/// A corpus as CBOR, through the dynamic tree.
+fn cbor_of(name: &str) -> Vec<u8> {
+    let json = girders_json::parse(&data(name)).unwrap();
+    girders_cbor::encode(&json, &value())
+}
+
 library_benchmark_group!(
     name = cbor,
     benchmarks = [
         decode_cbor_canada,
         decode_cbor_citm,
         decode_cbor_twitter,
+        decode_cbor_value,
         encode_cbor_canada,
         encode_cbor_citm,
         encode_cbor_twitter,
