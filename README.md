@@ -103,3 +103,9 @@ format, are the least settled part.
 - `benches/`, `bench-fixtures/`: runtime, compile-time and binary-size
   comparisons with serde.
 - `spikes/`: experiments that shaped the API.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The RFC 8949 test vectors in
+`girders-cbor/tests/rfc8949/` keep their own IETF Trust (Revised BSD)
+notice.
