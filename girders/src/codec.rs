@@ -908,3 +908,210 @@ impl<T: Clone + PartialEq, const N: usize> Encoder for StringEnum<T, N> {
         s.write_str(name)
     }
 }
+
+// -- numbers in strings ------------------------------------------------------------
+
+/// A number codec whose values can also be written as text (see
+/// [`stringified`]).
+pub trait NumberText: Codec<Output: Sized> {
+    fn parse_text(&self, text: &str) -> Result<Self::Output, Problem>;
+    fn format_text(&self, v: &Self::Output) -> String;
+}
+
+/// Whether `text` follows JSON's number grammar,
+/// `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`: `None` if not, else
+/// whether it has a fraction or exponent.
+pub fn number_grammar(text: &str) -> Option<bool> {
+    let b = text.as_bytes();
+    let mut i = usize::from(b.first() == Some(&b'-'));
+    let digits = |i: &mut usize| {
+        let start = *i;
+        while b.get(*i).is_some_and(u8::is_ascii_digit) {
+            *i += 1;
+        }
+        *i > start
+    };
+    match b.get(i) {
+        Some(b'0') => i += 1,
+        Some(b'1'..=b'9') => {
+            digits(&mut i);
+        }
+        _ => return None,
+    }
+    let mut float = false;
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        float = true;
+        if !digits(&mut i) {
+            return None;
+        }
+    }
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        float = true;
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        if !digits(&mut i) {
+            return None;
+        }
+    }
+    (i == b.len()).then_some(float)
+}
+
+fn not_a_number(text: &str, expected: &'static str) -> Problem {
+    Problem::mismatch(expected, alloc::format!("{text:?}"))
+}
+
+macro_rules! integer_text {
+    ($($codec:ty, $t:ty;)*) => {$(
+        impl NumberText for $codec {
+            fn parse_text(&self, text: &str) -> Result<$t, Problem> {
+                if number_grammar(text) != Some(false) {
+                    return Err(not_a_number(text, "integer text"));
+                }
+                text.parse().map_err(|_| {
+                    Problem::OutOfRange(alloc::format!("{text} is out of range for {}", stringify!($t)))
+                })
+            }
+            fn format_text(&self, v: &$t) -> String {
+                v.to_string()
+            }
+        }
+    )*};
+}
+
+integer_text! {
+    U8Codec, u8;
+    U16Codec, u16;
+    U32Codec, u32;
+    U64Codec, u64;
+    UsizeCodec, usize;
+    U128Codec, u128;
+    I8Codec, i8;
+    I16Codec, i16;
+    I32Codec, i32;
+    I64Codec, i64;
+    I128Codec, i128;
+}
+
+/// Float text: JSON's number grammar, or `NaN`, `Infinity`, `-Infinity`.
+fn parse_float_text(text: &str) -> Result<f64, Problem> {
+    match text {
+        "NaN" => return Ok(f64::NAN),
+        "Infinity" => return Ok(f64::INFINITY),
+        "-Infinity" => return Ok(f64::NEG_INFINITY),
+        _ => {}
+    }
+    if number_grammar(text).is_none() {
+        return Err(not_a_number(text, "number text"));
+    }
+    let v: f64 = text
+        .parse()
+        .map_err(|_| not_a_number(text, "number text"))?;
+    if v.is_finite() {
+        Ok(v)
+    } else {
+        Err(Problem::OutOfRange(alloc::format!(
+            "{text} is out of range for f64"
+        )))
+    }
+}
+
+fn format_float_text(v: f64) -> String {
+    if v.is_nan() {
+        "NaN".into()
+    } else if v.is_infinite() {
+        if v > 0.0 { "Infinity" } else { "-Infinity" }.into()
+    } else {
+        alloc::format!("{v:?}")
+    }
+}
+
+impl NumberText for F64Codec {
+    fn parse_text(&self, text: &str) -> Result<f64, Problem> {
+        parse_float_text(text)
+    }
+    fn format_text(&self, v: &f64) -> String {
+        format_float_text(*v)
+    }
+}
+
+impl NumberText for F32Codec {
+    fn parse_text(&self, text: &str) -> Result<f32, Problem> {
+        let v = parse_float_text(text)?;
+        let f = v as f32;
+        if v.is_finite() && !f.is_finite() {
+            return Err(Problem::OutOfRange(alloc::format!(
+                "{text} is out of range for f32"
+            )));
+        }
+        Ok(f)
+    }
+    fn format_text(&self, v: &f32) -> String {
+        if v.is_finite() {
+            alloc::format!("{v:?}")
+        } else {
+            format_float_text(*v as f64)
+        }
+    }
+}
+
+impl NumberText for F16Codec {
+    fn parse_text(&self, text: &str) -> Result<f32, Problem> {
+        let v = parse_float_text(text)?;
+        let half = crate::half::f16_to_f64(crate::half::f64_to_f16(v));
+        if v.is_finite() && !half.is_finite() {
+            return Err(Problem::OutOfRange(alloc::format!(
+                "{text} is out of range for a half-precision float"
+            )));
+        }
+        Ok(half as f32)
+    }
+    fn format_text(&self, v: &f32) -> String {
+        let half = crate::half::f16_to_f64(crate::half::f64_to_f16(*v as f64)) as f32;
+        if half.is_finite() {
+            alloc::format!("{half:?}")
+        } else {
+            format_float_text(half as f64)
+        }
+    }
+}
+
+/// A number written as a string: `stringified(u64())` reads and writes
+/// `"18446744073709551615"`. Common for IDs too large for JavaScript
+/// numbers (twitter's `id_str`). The text must be in JSON's number grammar;
+/// floats also accept `NaN`, `Infinity` and `-Infinity`. To accept either a
+/// number or a string, use `one_of((u64(), stringified(u64())))`.
+#[derive(Debug, Clone, Copy)]
+pub struct Stringified<C>(C);
+
+pub const fn stringified<C: NumberText>(number: C) -> Stringified<C> {
+    Stringified(number)
+}
+
+impl<C: NumberText> Decoder for Stringified<C> {
+    type Output = C::Output;
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        _cx: &mut DecodeContext,
+    ) -> DecodeResult<C::Output, R> {
+        let at = r.here();
+        let mut text = String::new();
+        r.read_str(&mut text)?;
+        self.0.parse_text(&text).map_err(|p| DecodeError::at(p, at))
+    }
+}
+
+impl<C: NumberText> Encoder for Stringified<C> {
+    type Input = C::Output;
+    fn encode<S: Serializer + ?Sized>(
+        &self,
+        v: &C::Output,
+        s: &mut S,
+        _cx: &mut EncodeContext,
+    ) -> Result<(), S::Error> {
+        s.write_str(&self.0.format_text(v))
+    }
+}

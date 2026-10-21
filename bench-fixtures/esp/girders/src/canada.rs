@@ -52,7 +52,7 @@ fn geometry() -> impl Codec<Output = Geometry> + Clone {
 fn feature() -> impl Codec<Output = Feature> + Clone {
     record((
         field("type", obj_type(), |f: &Feature| &f.obj_type),
-        field("properties", btree_map(string()), |f: &Feature| &f.properties),
+        field("properties", btree_map(string(), string()), |f: &Feature| &f.properties),
         field("geometry", geometry(), |f: &Feature| &f.geometry),
     ))
     .build(|(obj_type, properties, geometry)| Feature { obj_type, properties, geometry })

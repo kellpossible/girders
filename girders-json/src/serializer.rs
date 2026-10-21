@@ -46,8 +46,9 @@ impl<W: std::io::Write> Write for IoWrite<W> {
 pub enum EncodeError<E> {
     /// JSON has no NaN or infinities.
     NonFinite(f64),
-    /// A map key that JSON can't represent: only strings and integers
-    /// (written as their text) can be keys.
+    /// A map key that JSON can't represent: strings, numbers and bools
+    /// (written as their text) can be keys; `null`, arrays and objects
+    /// can't.
     UnsupportedKey,
     Write(E),
 }
@@ -57,7 +58,7 @@ impl<E: fmt::Debug> fmt::Display for EncodeError<E> {
         match self {
             EncodeError::NonFinite(x) => write!(f, "cannot encode non-finite number {x} as JSON"),
             EncodeError::UnsupportedKey => {
-                f.write_str("JSON object keys must be strings or integers")
+                f.write_str("JSON object keys must be strings, numbers or bools")
             }
             EncodeError::Write(e) => write!(f, "write failed: {e:?}"),
         }
@@ -161,6 +162,13 @@ impl<W: Write> JsonSerializer<W> {
         self.raw(if self.indent.is_some() { b": " } else { b":" })
     }
 
+    /// A bool or number key written as a value: its text, quoted.
+    #[cold]
+    fn text_key(&mut self, text: &str) -> Result<(), EncodeError<W::Error>> {
+        self.write_string(text)?;
+        self.finish_key()
+    }
+
     /// An integer key written as a value: quoted, since JSON keys are
     /// strings.
     #[cold]
@@ -245,7 +253,9 @@ impl<W: Write> Serializer for JsonSerializer<W> {
     type Error = EncodeError<W::Error>;
 
     fn write_bool(&mut self, v: bool) -> Result<(), Self::Error> {
-        self.not_a_key()?;
+        if self.key_next {
+            return self.text_key(if v { "true" } else { "false" });
+        }
         self.raw(if v { b"true" } else { b"false" })
     }
 
@@ -278,6 +288,9 @@ impl<W: Write> Serializer for JsonSerializer<W> {
     }
 
     fn write_f64(&mut self, v: f64) -> Result<(), Self::Error> {
+        if self.key_next && v.is_finite() {
+            return self.text_key(&alloc::format!("{v:?}"));
+        }
         self.not_a_key()?;
         if !v.is_finite() {
             return Err(EncodeError::NonFinite(v));
@@ -293,6 +306,9 @@ impl<W: Write> Serializer for JsonSerializer<W> {
     }
 
     fn write_f32(&mut self, v: f32) -> Result<(), Self::Error> {
+        if self.key_next && v.is_finite() {
+            return self.text_key(&alloc::format!("{v:?}"));
+        }
         self.not_a_key()?;
         if !v.is_finite() {
             return Err(EncodeError::NonFinite(v as f64));
@@ -306,7 +322,9 @@ impl<W: Write> Serializer for JsonSerializer<W> {
     }
 
     fn write_number_text(&mut self, v: &str) -> Result<(), Self::Error> {
-        self.not_a_key()?;
+        if self.key_next {
+            return self.text_key(v);
+        }
         self.raw(v.as_bytes())
     }
 

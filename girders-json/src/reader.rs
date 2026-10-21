@@ -12,6 +12,7 @@ use crate::source::Source;
 use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
+use girders::codec::NumberText;
 use girders::reader::DecodeResult;
 use girders::{DecodeError, Kind, Number, Problem, Reader, Span};
 
@@ -34,10 +35,22 @@ pub struct JsonReader<S> {
     scratch: Vec<u8>,
     /// Span of the last key read (when tracking locations).
     last_key: Option<Span>,
+    /// A key read by `object_next_entry`, not yet read as a value.
+    pending_key: Option<PendingKey>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct JsonCheckpoint(u64);
+/// An object key standing in for a value (see `object_next_entry`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingKey {
+    text: String,
+    span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonCheckpoint {
+    at: u64,
+    pending_key: Option<PendingKey>,
+}
 
 struct NumberToken {
     start: usize,
@@ -56,6 +69,7 @@ impl<S: Source> JsonReader<S> {
             cps: Vec::new(),
             scratch: Vec::new(),
             last_key: None,
+            pending_key: None,
         }
     }
 
@@ -540,11 +554,75 @@ fn describe_byte(b: u8) -> String {
     alloc::format!("`{}`", describe_raw(b))
 }
 
+/// A key's text as a dynamic number.
+fn key_as_number(text: &str) -> Result<Number, Problem> {
+    match girders::codec::number_grammar(text) {
+        None => Err(Problem::mismatch("number", alloc::format!("{text:?}"))),
+        Some(true) => girders::codec::f64().parse_text(text).map(Number::F64),
+        Some(false) => Ok(if let Ok(i) = text.parse::<i64>() {
+            Number::I64(i)
+        } else if let Ok(u) = text.parse::<u64>() {
+            Number::U64(u)
+        } else {
+            Number::BigInt(text.into())
+        }),
+    }
+}
+
+// Reading an object key as a value (after `object_next_entry`). JSON keys
+// are strings, so a key reads as a string, or as a number or bool parsed
+// from its text. Out of line: records never take this path.
+impl<S: Source> JsonReader<S> {
+    /// The cursor's offset after whitespace.
+    fn here_offset(&mut self) -> JsonResult<u64> {
+        self.skip_ws()?;
+        Ok(self.offset())
+    }
+
+    #[cold]
+    fn key_str(&mut self, buf: &mut String) -> DecodeResult<(), Self> {
+        let key = self.pending_key.take().expect("a pending key");
+        if buf.is_empty() {
+            *buf = key.text;
+        } else {
+            buf.push_str(&key.text);
+        }
+        Ok(())
+    }
+
+    #[cold]
+    fn key_number<T>(
+        &mut self,
+        parse: impl FnOnce(&str) -> Result<T, Problem>,
+    ) -> DecodeResult<T, Self> {
+        let key = self.pending_key.take().expect("a pending key");
+        parse(&key.text).map_err(|p| DecodeError::at(p, Some(key.span)))
+    }
+
+    #[cold]
+    fn key_bool(&mut self) -> DecodeResult<bool, Self> {
+        self.key_number(|t| match t {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(Problem::mismatch("bool", alloc::format!("{t:?}"))),
+        })
+    }
+
+    #[cold]
+    fn key_mismatch(&self, expected: &'static str) -> JsonError {
+        let span = self.pending_key.as_ref().map(|k| k.span);
+        DecodeError::at(Problem::mismatch(expected, "string (an object key)"), span)
+    }
+}
+
 impl<S: Source> Reader for JsonReader<S> {
     type Location = Span;
     type Checkpoint = JsonCheckpoint;
 
     fn peek_kind(&mut self) -> DecodeResult<Kind, Self> {
+        if self.pending_key.is_some() {
+            return Ok(Kind::String);
+        }
         self.skip_ws()?;
         match self.peek()? {
             None => Ok(Kind::Eof),
@@ -561,6 +639,9 @@ impl<S: Source> Reader for JsonReader<S> {
     fn here(&mut self) -> Option<Span> {
         if !self.track {
             return None;
+        }
+        if let Some(key) = &self.pending_key {
+            return Some(Span::point(key.span.start()));
         }
         let _ = self.skip_ws();
         Some(Span::point(self.offset()))
@@ -584,6 +665,9 @@ impl<S: Source> Reader for JsonReader<S> {
     }
 
     fn read_bool(&mut self) -> DecodeResult<bool, Self> {
+        if self.pending_key.is_some() {
+            return self.key_bool();
+        }
         self.skip_ws()?;
         match self.peek()? {
             Some(b't') => self.keyword(b"true", "bool").map(|()| true),
@@ -593,11 +677,17 @@ impl<S: Source> Reader for JsonReader<S> {
     }
 
     fn read_null(&mut self) -> DecodeResult<(), Self> {
+        if self.pending_key.is_some() {
+            return Err(self.key_mismatch("null"));
+        }
         self.keyword(b"null", "null")
     }
 
     #[inline]
     fn read_str(&mut self, buf: &mut String) -> DecodeResult<(), Self> {
+        if self.pending_key.is_some() {
+            return self.key_str(buf);
+        }
         self.skip_ws()?;
         match self.peek()? {
             Some(b'"') => {
@@ -611,6 +701,9 @@ impl<S: Source> Reader for JsonReader<S> {
 
     #[inline]
     fn read_i64(&mut self) -> DecodeResult<i64, Self> {
+        if self.pending_key.is_some() {
+            return self.key_number(|t| girders::codec::i64().parse_text(t));
+        }
         let t = self.int_tok()?;
         match self.int_magnitude(&t) {
             Some((false, m)) if m <= i64::MAX as u64 => Ok(m as i64),
@@ -621,6 +714,9 @@ impl<S: Source> Reader for JsonReader<S> {
 
     #[inline]
     fn read_u64(&mut self) -> DecodeResult<u64, Self> {
+        if self.pending_key.is_some() {
+            return self.key_number(|t| girders::codec::u64().parse_text(t));
+        }
         let t = self.int_tok()?;
         match self.int_magnitude(&t) {
             Some((false, m)) | Some((true, m @ 0)) => Ok(m),
@@ -629,6 +725,13 @@ impl<S: Source> Reader for JsonReader<S> {
     }
 
     fn read_f64(&mut self) -> DecodeResult<f64, Self> {
+        if self.pending_key.is_some() {
+            // Finite numbers only, as serde_json: no `NaN` or `Infinity` keys.
+            return self.key_number(|t| match girders::codec::number_grammar(t) {
+                Some(_) => girders::codec::f64().parse_text(t),
+                None => Err(Problem::mismatch("number", alloc::format!("{t:?}"))),
+            });
+        }
         let t = self.number("float")?;
         if !t.is_float
             && t.end - t.start <= 16
@@ -645,6 +748,9 @@ impl<S: Source> Reader for JsonReader<S> {
     }
 
     fn read_number(&mut self) -> DecodeResult<Number, Self> {
+        if self.pending_key.is_some() {
+            return self.key_number(key_as_number);
+        }
         let t = self.number("number")?;
         if t.is_float {
             return match self.tok_text(&t).parse::<f64>() {
@@ -661,6 +767,14 @@ impl<S: Source> Reader for JsonReader<S> {
     }
 
     fn read_number_text(&mut self, buf: &mut String) -> DecodeResult<(), Self> {
+        if self.pending_key.is_some() {
+            let text = self.key_number(|t| match girders::codec::number_grammar(t) {
+                Some(_) => Ok(String::from(t)),
+                None => Err(Problem::mismatch("number text", alloc::format!("{t:?}"))),
+            })?;
+            buf.push_str(&text);
+            return Ok(());
+        }
         let t = self.number("number")?;
         buf.push_str(self.tok_text(&t));
         Ok(())
@@ -668,6 +782,9 @@ impl<S: Source> Reader for JsonReader<S> {
 
     #[inline]
     fn begin_array(&mut self) -> DecodeResult<(), Self> {
+        if self.pending_key.is_some() {
+            return Err(self.key_mismatch("array"));
+        }
         self.expect_byte(b'[', "array")
     }
 
@@ -693,6 +810,9 @@ impl<S: Source> Reader for JsonReader<S> {
 
     #[inline]
     fn begin_object(&mut self) -> DecodeResult<(), Self> {
+        if self.pending_key.is_some() {
+            return Err(self.key_mismatch("object"));
+        }
         self.expect_byte(b'{', "object")
     }
 
@@ -711,6 +831,17 @@ impl<S: Source> Reader for JsonReader<S> {
         }
     }
 
+    fn object_next_entry(&mut self, first: bool) -> DecodeResult<bool, Self> {
+        let mut text = String::new();
+        let start = self.here_offset()?;
+        if !self.object_next_key(first, &mut text)? {
+            return Ok(false);
+        }
+        let span = self.last_key.unwrap_or(Span::point(start));
+        self.pending_key = Some(PendingKey { text, span });
+        Ok(true)
+    }
+
     #[inline]
     fn end_object(&mut self) -> DecodeResult<(), Self> {
         self.expect_byte(b'}', "`}`")
@@ -718,6 +849,9 @@ impl<S: Source> Reader for JsonReader<S> {
 
     /// Iterative, so arbitrarily deep input cannot overflow the stack.
     fn skip_value(&mut self) -> DecodeResult<(), Self> {
+        if self.pending_key.take().is_some() {
+            return Ok(());
+        }
         // `true` = object, `false` = array.
         let mut stack: Vec<bool> = Vec::new();
         'value: loop {
@@ -794,11 +928,15 @@ impl<S: Source> Reader for JsonReader<S> {
     fn checkpoint(&mut self) -> JsonCheckpoint {
         let at = self.offset();
         self.cps.push(at);
-        JsonCheckpoint(at)
+        JsonCheckpoint {
+            at,
+            pending_key: self.pending_key.clone(),
+        }
     }
 
     fn rewind(&mut self, cp: &JsonCheckpoint) {
-        self.pos = (cp.0 - self.base) as usize;
+        self.pos = (cp.at - self.base) as usize;
+        self.pending_key.clone_from(&cp.pending_key);
     }
 
     fn release(&mut self, _cp: JsonCheckpoint) {

@@ -1,9 +1,10 @@
-//! Collection codecs: `list`, `entries`, `btree_map`, `hash_map`.
+//! Collection codecs: `list`, `array`, `btree_map` and tuples.
 
-use crate::codec::{DecodeResult, Decoder, Encoder, decode_child};
+use crate::codec::{Codec, DecodeResult, Decoder, Encoder, decode_child};
 use crate::context::{DecodeContext, EncodeContext};
 use crate::error::{Collector, DecodeError, PathSegment, Problem};
 use crate::reader::Reader;
+use crate::record::Duplicates;
 use crate::serializer::Serializer;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -138,185 +139,308 @@ impl<C: Encoder<Input: Sized>> Encoder for List<C> {
 
 // -- objects as maps ---------------------------------------------------------
 
-/// Read every entry of an object, calling `insert` per decoded entry.
-fn decode_entries<
-    R: Reader + ?Sized,
-    C: Decoder,
-    F: FnMut(String, C::Output) -> Result<(), Problem>,
->(
-    inner: &C,
-    r: &mut R,
-    cx: &mut DecodeContext,
-    mut insert: F,
-) -> DecodeResult<(), R> {
-    r.begin_object()?;
-    cx.nested(|cx| {
-        let mut errs = Collector::new();
-        let mut first = true;
-        let mut key = String::new();
-        while r.object_next_key(first, &mut key)? {
-            first = false;
-            let k = core::mem::take(&mut key);
-            let at = r.here();
-            if let Some(v) = child(
-                r,
-                cx,
-                &mut errs,
-                || PathSegment::Key(k.clone()),
-                |r, cx| decode_child(&inner, r, cx),
-            )? && let Err(p) = insert(k, v)
-            {
-                let e = DecodeError::at(p, at);
-                if cx.options.accumulate {
-                    errs.push(e);
-                } else {
-                    return Err(e);
-                }
-            }
-        }
-        r.end_object()?;
-        errs.finish()
-    })
-}
+// -- maps --------------------------------------------------------------------
 
-/// Object entries in document order, duplicates kept: `Vec<(String, T)>`.
+/// A `BTreeMap<K, V>` as an object (JSON) or map (CBOR), with keys and
+/// values through their own codecs: `btree_map(string(), user())`.
+///
+/// The format decides how a key looks: JSON keys are strings, so a `u32()`
+/// key reads and writes `"42"`; CBOR keys are values, so the same codec
+/// reads and writes the integer `42`. Duplicate keys are an error unless
+/// [`MapCodec::duplicates`] says otherwise. Encoding is in key order.
 #[derive(Debug, Clone, Copy)]
-pub struct Entries<C>(pub C);
-pub const fn entries<C>(inner: C) -> Entries<C> {
-    Entries(inner)
+pub struct MapCodec<KC, VC> {
+    key: KC,
+    value: VC,
+    duplicates: Duplicates,
 }
 
-impl<C: Decoder> Decoder for Entries<C> {
-    type Output = Vec<(String, C::Output)>;
+impl<KC, VC> MapCodec<KC, VC> {
+    /// What to do when a key repeats.
+    pub fn duplicates(mut self, duplicates: Duplicates) -> Self {
+        self.duplicates = duplicates;
+        self
+    }
+}
+
+pub const fn btree_map<KC, VC>(key: KC, value: VC) -> MapCodec<KC, VC> {
+    MapCodec {
+        key,
+        value,
+        duplicates: Duplicates::Error,
+    }
+}
+
+impl<KC, VC> Decoder for MapCodec<KC, VC>
+where
+    KC: Codec<Output: Ord>,
+    VC: Decoder,
+{
+    type Output = BTreeMap<KC::Output, VC::Output>;
     fn decode<R: Reader + ?Sized>(
         &self,
         r: &mut R,
         cx: &mut DecodeContext,
     ) -> DecodeResult<Self::Output, R> {
-        let mut out = Vec::new();
-        decode_entries(&self.0, r, cx, |k, v| {
-            out.push((k, v));
-            Ok(())
-        })?;
-        Ok(out)
-    }
-}
-
-impl<C: Encoder<Input: Sized>> Encoder for Entries<C> {
-    type Input = Vec<(String, C::Input)>;
-    fn encode<S: Serializer + ?Sized>(
-        &self,
-        v: &Self::Input,
-        s: &mut S,
-        cx: &mut EncodeContext,
-    ) -> Result<(), S::Error> {
-        s.begin_object(Some(v.len()))?;
-        for (k, x) in v {
-            s.object_key(k)?;
-            self.0.encode(x, s, cx)?;
-        }
-        s.end_object()
-    }
-}
-
-/// `BTreeMap<String, T>`. Duplicate keys are an error.
-#[derive(Debug, Clone, Copy)]
-pub struct BTreeMapCodec<C>(pub C);
-pub const fn btree_map<C>(inner: C) -> BTreeMapCodec<C> {
-    BTreeMapCodec(inner)
-}
-
-impl<C: Decoder> Decoder for BTreeMapCodec<C> {
-    type Output = BTreeMap<String, C::Output>;
-    fn decode<R: Reader + ?Sized>(
-        &self,
-        r: &mut R,
-        cx: &mut DecodeContext,
-    ) -> DecodeResult<Self::Output, R> {
-        let mut out = BTreeMap::new();
-        decode_entries(&self.0, r, cx, |k, v| match out.entry(k) {
-            alloc::collections::btree_map::Entry::Occupied(o) => {
-                Err(Problem::DuplicateField(o.key().clone()))
-            }
-            alloc::collections::btree_map::Entry::Vacant(e) => {
-                e.insert(v);
-                Ok(())
-            }
-        })?;
-        Ok(out)
-    }
-}
-
-impl<C: Encoder<Input: Sized>> Encoder for BTreeMapCodec<C> {
-    type Input = BTreeMap<String, C::Input>;
-    fn encode<S: Serializer + ?Sized>(
-        &self,
-        v: &Self::Input,
-        s: &mut S,
-        cx: &mut EncodeContext,
-    ) -> Result<(), S::Error> {
-        s.begin_object(Some(v.len()))?;
-        for (k, x) in v {
-            s.object_key(k)?;
-            self.0.encode(x, s, cx)?;
-        }
-        s.end_object()
-    }
-}
-
-#[cfg(feature = "std")]
-mod hash {
-    use super::*;
-    use std::collections::HashMap;
-
-    /// `HashMap<String, T>` (requires `std`). Duplicate keys are an error.
-    /// Encoding order follows the map's iteration order.
-    #[derive(Debug, Clone, Copy)]
-    pub struct HashMapCodec<C>(pub C);
-    pub const fn hash_map<C>(inner: C) -> HashMapCodec<C> {
-        HashMapCodec(inner)
-    }
-
-    impl<C: Decoder> Decoder for HashMapCodec<C> {
-        type Output = HashMap<String, C::Output>;
-        fn decode<R: Reader + ?Sized>(
-            &self,
-            r: &mut R,
-            cx: &mut DecodeContext,
-        ) -> DecodeResult<Self::Output, R> {
-            let mut out = HashMap::new();
-            decode_entries(&self.0, r, cx, |k, v| match out.entry(k) {
-                std::collections::hash_map::Entry::Occupied(o) => {
-                    Err(Problem::DuplicateField(o.key().clone()))
+        r.begin_object()?;
+        let out = cx.nested(|cx| {
+            let mut out = BTreeMap::new();
+            let mut errs = Collector::new();
+            let mut first = true;
+            while r.object_next_entry(first)? {
+                first = false;
+                let at = r.here();
+                let Some(key) = self.decode_key(r, cx, &mut errs)? else {
+                    continue;
+                };
+                if out.contains_key(&key) {
+                    match self.duplicates {
+                        Duplicates::Error => {
+                            let e = DecodeError::at(
+                                Problem::DuplicateField(key_text(&self.key, &key)),
+                                at,
+                            );
+                            if !cx.options.accumulate {
+                                return Err(e);
+                            }
+                            errs.push(e);
+                            r.skip_value()?;
+                            continue;
+                        }
+                        Duplicates::FirstWins => {
+                            r.skip_value()?;
+                            continue;
+                        }
+                        Duplicates::LastWins => {}
+                    }
                 }
-                std::collections::hash_map::Entry::Vacant(e) => {
-                    e.insert(v);
-                    Ok(())
+                if let Some(v) = child(
+                    r,
+                    cx,
+                    &mut errs,
+                    || PathSegment::Key(key_text(&self.key, &key)),
+                    |r, cx| decode_child(&self.value, r, cx),
+                )? {
+                    out.insert(key, v);
                 }
-            })?;
+            }
+            errs.finish()?;
             Ok(out)
-        }
+        })?;
+        r.end_object()?;
+        Ok(out)
     }
+}
 
-    impl<C: Encoder<Input: Sized>> Encoder for HashMapCodec<C> {
-        type Input = HashMap<String, C::Input>;
-        fn encode<S: Serializer + ?Sized>(
-            &self,
-            v: &Self::Input,
-            s: &mut S,
-            cx: &mut EncodeContext,
-        ) -> Result<(), S::Error> {
-            s.begin_object(Some(v.len()))?;
-            for (k, x) in v {
-                s.object_key(k)?;
-                self.0.encode(x, s, cx)?;
+impl<KC: Codec<Output: Sized>, VC> MapCodec<KC, VC> {
+    /// The entry's key; `None` when it failed in accumulate mode (the
+    /// error is recorded and the whole entry skipped).
+    fn decode_key<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+        errs: &mut Collector<R::Location>,
+    ) -> DecodeResult<Option<KC::Output>, R> {
+        if !cx.options.accumulate {
+            return decode_child(&self.key, r, cx).map(Some);
+        }
+        let cp = r.checkpoint();
+        match decode_child(&self.key, r, cx) {
+            Ok(k) => {
+                r.release(cp);
+                Ok(Some(k))
             }
-            s.end_object()
+            Err(e) if e.is_fatal() => {
+                r.release(cp);
+                Err(e)
+            }
+            Err(e) => {
+                r.rewind(&cp);
+                r.release(cp);
+                r.skip_value()?;
+                r.skip_value()?;
+                errs.push(e);
+                Ok(None)
+            }
         }
     }
 }
-#[cfg(feature = "std")]
-pub use hash::{HashMapCodec, hash_map};
+
+impl<KC, VC> Encoder for MapCodec<KC, VC>
+where
+    KC: Codec<Output: Ord>,
+    VC: Encoder<Input: Sized>,
+{
+    type Input = BTreeMap<KC::Output, VC::Input>;
+    fn encode<S: Serializer + ?Sized>(
+        &self,
+        v: &Self::Input,
+        s: &mut S,
+        cx: &mut EncodeContext,
+    ) -> Result<(), S::Error> {
+        s.begin_object(Some(v.len()))?;
+        for (k, x) in v {
+            s.object_key_value()?;
+            self.key.encode(k, s, cx)?;
+            self.value.encode(x, s, cx)?;
+        }
+        s.end_object()
+    }
+}
+
+/// A key as text, for error paths: encoded with its own codec into a
+/// serializer that only collects text.
+#[cold]
+#[inline(never)]
+fn key_text<KC: Encoder + ?Sized>(codec: &KC, key: &KC::Input) -> String {
+    let mut text = KeyText(String::new());
+    let _ = codec.encode(key, &mut text, &mut EncodeContext::new());
+    text.0
+}
+
+/// Collects a key's text (see [`key_text`]).
+struct KeyText(String);
+
+impl Serializer for KeyText {
+    type Error = core::convert::Infallible;
+    fn write_bool(&mut self, v: bool) -> Result<(), Self::Error> {
+        self.0.push_str(if v { "true" } else { "false" });
+        Ok(())
+    }
+    fn write_null(&mut self) -> Result<(), Self::Error> {
+        self.0.push_str("null");
+        Ok(())
+    }
+    fn write_i64(&mut self, v: i64) -> Result<(), Self::Error> {
+        self.0.push_str(&alloc::format!("{v}"));
+        Ok(())
+    }
+    fn write_u64(&mut self, v: u64) -> Result<(), Self::Error> {
+        self.0.push_str(&alloc::format!("{v}"));
+        Ok(())
+    }
+    fn write_f64(&mut self, v: f64) -> Result<(), Self::Error> {
+        self.0.push_str(&alloc::format!("{v:?}"));
+        Ok(())
+    }
+    fn write_f32(&mut self, v: f32) -> Result<(), Self::Error> {
+        self.0.push_str(&alloc::format!("{v:?}"));
+        Ok(())
+    }
+    fn write_number_text(&mut self, v: &str) -> Result<(), Self::Error> {
+        self.0.push_str(v);
+        Ok(())
+    }
+    fn write_str(&mut self, v: &str) -> Result<(), Self::Error> {
+        self.0.push_str(v);
+        Ok(())
+    }
+    fn begin_array(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
+        self.0.push('[');
+        Ok(())
+    }
+    fn array_element(&mut self) -> Result<(), Self::Error> {
+        if !self.0.ends_with('[') {
+            self.0.push_str(", ");
+        }
+        Ok(())
+    }
+    fn end_array(&mut self) -> Result<(), Self::Error> {
+        self.0.push(']');
+        Ok(())
+    }
+    fn begin_object(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
+        self.0.push_str("{…}");
+        Ok(())
+    }
+    fn object_key(&mut self, _key: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn object_key_value(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn end_object(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+// -- fixed-length arrays -------------------------------------------------------
+
+/// `[T; N]`: an array of exactly `N` elements. `N` is usually inferred
+/// from the field's type: `field("rgb", array(u8()), |c: &Color| &c.rgb)`.
+#[derive(Debug, Clone, Copy)]
+pub struct ArrayCodec<C, const N: usize>(C);
+
+pub const fn array<C, const N: usize>(element: C) -> ArrayCodec<C, N> {
+    ArrayCodec(element)
+}
+
+impl<C: Decoder, const N: usize> Decoder for ArrayCodec<C, N> {
+    type Output = [C::Output; N];
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<[C::Output; N], R> {
+        let at = r.here();
+        r.begin_array()?;
+        // Filled in place: no allocation, and no `Default` needed for `T`.
+        let slots = cx.nested(|cx| {
+            let mut slots: [Option<C::Output>; N] = [const { None }; N];
+            let mut errs = Collector::new();
+            let mut count = 0;
+            while r.array_has_next(count == 0)? {
+                if count == N {
+                    return Err(DecodeError::at(
+                        Problem::mismatch(
+                            alloc::format!("{N} elements"),
+                            alloc::format!("more than {N}"),
+                        ),
+                        r.here(),
+                    ));
+                }
+                let i = count;
+                if let Some(v) = child(
+                    r,
+                    cx,
+                    &mut errs,
+                    || PathSegment::Index(i),
+                    |r, cx| decode_child(&self.0, r, cx),
+                )? {
+                    slots[i] = Some(v);
+                }
+                count += 1;
+            }
+            if count < N {
+                return Err(DecodeError::at(
+                    Problem::mismatch(alloc::format!("{N} elements"), alloc::format!("{count}")),
+                    at.clone(),
+                ));
+            }
+            errs.finish()?;
+            Ok(slots)
+        })?;
+        r.end_array()?;
+        Ok(slots.map(|slot| slot.expect("every element was decoded")))
+    }
+}
+
+impl<C: Encoder<Input: Sized>, const N: usize> Encoder for ArrayCodec<C, N> {
+    type Input = [C::Input; N];
+    fn encode<S: Serializer + ?Sized>(
+        &self,
+        v: &[C::Input; N],
+        s: &mut S,
+        cx: &mut EncodeContext,
+    ) -> Result<(), S::Error> {
+        s.begin_array(Some(N))?;
+        for x in v {
+            s.array_element()?;
+            self.0.encode(x, s, cx)?;
+        }
+        s.end_array()
+    }
+}
 
 // -- fixed-size tuples as arrays -------------------------------------------------
 

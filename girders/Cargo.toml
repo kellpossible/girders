@@ -8,7 +8,7 @@ publish.workspace = true
 
 [features]
 default = ["std"]
-# Only adds `HashMap` codecs; everything else is `no_std` + `alloc`.
+# Only adds `io::Read` input (`source::ReadSource`); everything else is `no_std` + `alloc`.
 std = []
 
 [dependencies]

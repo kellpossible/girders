@@ -9,7 +9,7 @@
 //!   errors unless a codec opts out.
 //! - Records, tagged unions, versioned codecs and recursive types are
 //!   all built from plain combinators; there are no derive macros.
-//! - `no_std` + `alloc`; the `std` feature only adds `HashMap` codecs.
+//! - `no_std` + `alloc`; the `std` feature only adds `io::Read` input.
 
 #![no_std]
 

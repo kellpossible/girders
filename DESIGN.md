@@ -940,7 +940,6 @@ The JSON serializer's key mode costs up to 1% of encode instructions
 ### 10.7 Not yet
 
 - Multi-dimensional typed arrays (RFC 8746 tags 40 and 1040).
-- Typed map keys (N3).
 
 ---
 
@@ -1120,7 +1119,7 @@ These were implemented as recommended, and the evidence supports them.
 | Q12 | jj, and the git ownership warning | Unchanged. Nothing is committed. |
 | N1 | Union `Payload` for struct-like variants | `Pick2::Variant0(x.into())` borrows; `Payload::Owned((w, h))` builds the payload. Every arm needs `.into()` (§6.6 changed). Accept, or allow only newtype variants? |
 | ~~N2~~ | Wide records | **Decided: tuple records, cap 16, `.build(|(a, b, …)| …)`.** Alternatives were spiked and rejected, with the numbers in RESULTS.md ("Record styles"): typed keys (`v.take(id.key)`) read well but cost about 30% more in debug builds; dropping `.key` as well (`v.take(id)`) needs `Copy` codecs and stores each codec twice, costing +45% in release; a `record!` macro_rules front end costs 3–7% and was removed (no macros); raising the cap costs +1 s (32) or +3.7 s (64) on every clean library build; right-nested tuples break rustfmt. Tuples have the best compile and run time, stay readable, and models are expected to be written with an LLM anyway. Side results kept: field codecs no longer go through a wrapper; per-field constants are associated consts; per-field method bodies live in helpers shared per value type. |
-| N3 | Missing primitives | An empty or fixed-length array (`array::<N>`), typed map keys (`map(key_codec, value_codec)`), a number inside a string (`int_str::<u64>()`). Recommendation: add all three. |
+| ~~N3~~ | Missing primitives | **Done.** `btree_map(key, value)`: keys and values through their own codecs, only `BTreeMap` (deterministic order, `no_std`). The format decides how a key looks: JSON quotes strings, numbers and bools and rejects anything else, matching serde_json in both directions (finite floats only, JSON number grammar); CBOR keys are native values. Duplicates are an error by default (`.duplicates(...)`). `array(c)` for `[T; N]`, built in place through `[Option<T>; N]`: no allocation, no `Default`, no `unsafe`. `stringified(number)` for numbers written as strings, in JSON number grammar. |
 | N4 | `Value` memory | **Done:** a niche-optimized 16-byte `Option<Span>` (64-bit offsets, no size limit) and key spans in an optional side table (`DecodeOptions::key_spans`). Node 56 → 48 bytes, entry 104 → 72 bytes. Remaining gap to serde_json on number-heavy data: each node still carries a span slot. |
 | N5 | `#![forbid(unsafe_code)]` | Costs on byte input: the ~10% `from_utf8` on canada number lexemes, plus UTF-8 checks on strings. `&str` input now avoids most of it with no `unsafe`. Keep the forbid, or allow audited `unsafe` in the reader? |
 | N6 | Float formatting with zero dependencies | canada encode is 4.6× serde, almost all in core's `{:?}` float formatting. Options: accept; port a shortest round-trip float formatter (Ryū is Apache-2.0/BSL-1.0 but large); or allow one dependency (`ryu` or `zmij`; would need researching). |

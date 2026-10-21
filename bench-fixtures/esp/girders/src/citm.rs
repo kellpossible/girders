@@ -161,17 +161,17 @@ fn event() -> impl Codec<Output = Event> + Clone {
 
 pub fn codec() -> impl Codec<Output = CitmCatalog> + Clone {
     record((
-        field("areaNames", btree_map(string()), |c: &CitmCatalog| &c.area_names),
-        field("audienceSubCategoryNames", btree_map(string()), |c: &CitmCatalog| &c.audience_sub_category_names),
-        field("blockNames", btree_map(string()), |c: &CitmCatalog| &c.block_names),
-        field("events", btree_map(event()), |c: &CitmCatalog| &c.events),
+        field("areaNames", btree_map(string(), string()), |c: &CitmCatalog| &c.area_names),
+        field("audienceSubCategoryNames", btree_map(string(), string()), |c: &CitmCatalog| &c.audience_sub_category_names),
+        field("blockNames", btree_map(string(), string()), |c: &CitmCatalog| &c.block_names),
+        field("events", btree_map(string(), event()), |c: &CitmCatalog| &c.events),
         field("performances", list(performance()), |c: &CitmCatalog| &c.performances),
-        field("seatCategoryNames", btree_map(string()), |c: &CitmCatalog| &c.seat_category_names),
-        field("subTopicNames", btree_map(string()), |c: &CitmCatalog| &c.sub_topic_names),
-        field("subjectNames", btree_map(string()), |c: &CitmCatalog| &c.subject_names),
-        field("topicNames", btree_map(string()), |c: &CitmCatalog| &c.topic_names),
-        field("topicSubTopics", btree_map(list(u32())), |c: &CitmCatalog| &c.topic_sub_topics),
-        field("venueNames", btree_map(string()), |c: &CitmCatalog| &c.venue_names),
+        field("seatCategoryNames", btree_map(string(), string()), |c: &CitmCatalog| &c.seat_category_names),
+        field("subTopicNames", btree_map(string(), string()), |c: &CitmCatalog| &c.sub_topic_names),
+        field("subjectNames", btree_map(string(), string()), |c: &CitmCatalog| &c.subject_names),
+        field("topicNames", btree_map(string(), string()), |c: &CitmCatalog| &c.topic_names),
+        field("topicSubTopics", btree_map(string(), list(u32())), |c: &CitmCatalog| &c.topic_sub_topics),
+        field("venueNames", btree_map(string(), string()), |c: &CitmCatalog| &c.venue_names),
     ))
     .build(
         |(

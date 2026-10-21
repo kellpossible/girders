@@ -32,7 +32,7 @@ pub fn team_codec() -> impl Codec<Output = Team> {
     record((
         field("name", string(), |t: &Team| &t.name),
         field("members", list(member_codec()), |t: &Team| &t.members),
-        field("seats", btree_map(i64()), |t: &Team| &t.seats),
+        field("seats", btree_map(string(), i64()), |t: &Team| &t.seats),
     ))
     .build(|(name, members, seats)| Team {
         name,
