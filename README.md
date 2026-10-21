@@ -51,6 +51,10 @@ and serde.
 - **Errors you can show users.** Decode errors carry byte spans, JSON
   pointers and field paths, can accumulate rather than stop at the
   first, and render as diagnostics against the source.
+- **Parse, don't validate.** Validators return your own error types,
+  and you get them back by type (`error.custom::<EmailError>()`) with
+  the path where each happened, rather than as strings. Syntax errors
+  are an enum per format (`girders_json::Malformed`).
 
 ## Compared with serde
 
@@ -61,7 +65,7 @@ and serde.
 | Macros | Proc-macro derives | None |
 | Dependencies | `serde`, `serde_derive`, `syn`, `quote`, `proc-macro2`, … | `siphasher` (girders-json only) |
 | Unknown fields | Accepted unless `deny_unknown_fields` | Rejected unless `.allow_unknown()` |
-| Errors | Line and column of the first error | Spans, paths, pointers; optionally every error |
+| Errors | Line and column of the first error; custom errors as strings | Spans, paths, pointers; optionally every error; custom errors keep their type |
 | Speed | Faster: girders decodes in 1.3–1.9× serde_json's instructions | Slower, in exchange for size and build time |
 
 Measurements, including where the speed gap comes from, are in

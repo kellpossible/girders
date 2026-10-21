@@ -112,8 +112,8 @@ proptest! {
         let all = girders_json::decode_with(&json, &c, DecodeOptions::all_errors());
         prop_assert_eq!(fast.is_ok(), all.is_ok());
         if let (Err(f), Err(a)) = (fast, all) {
-            let first = f.first().clone();
-            prop_assert!(a.iter().any(|d| *d == first), "fail-fast {:?} not in {:?}", first, a);
+            let first = f.first();
+            prop_assert!(a.iter().any(|d| d == first), "fail-fast {:?} not in {:?}", first, a);
         }
     }
 

@@ -81,6 +81,25 @@ impl PackedElement for F16Codec {
     }
 }
 
+/// A typed array whose byte length isn't a whole number of elements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypedArrayLengthError {
+    pub element_size: usize,
+    pub length: usize,
+}
+
+impl core::fmt::Display for TypedArrayLengthError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "a typed array of {}-byte elements is {} bytes long",
+            self.element_size, self.length
+        )
+    }
+}
+
+impl core::error::Error for TypedArrayLengthError {}
+
 /// See the [module documentation](self).
 #[derive(Debug, Clone, Copy)]
 pub struct Packed<E>(E);
@@ -125,14 +144,11 @@ impl<E: PackedElement> Decoder for Packed<E> {
         let mut bytes = Vec::new();
         r.read_bytes(&mut bytes)?;
         if bytes.len() % E::SIZE != 0 {
-            return Err(DecodeError::at(
-                Problem::ValidationFailed(alloc::format!(
-                    "a typed array of {}-byte elements is {} bytes long",
-                    E::SIZE,
-                    bytes.len()
-                )),
-                at,
-            ));
+            let error = TypedArrayLengthError {
+                element_size: E::SIZE,
+                length: bytes.len(),
+            };
+            return Err(DecodeError::invalid(error, at));
         }
         let chunks = bytes.chunks_exact(E::SIZE);
         Ok(if little {

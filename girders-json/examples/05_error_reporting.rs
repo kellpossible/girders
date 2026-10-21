@@ -70,7 +70,10 @@ pub fn main() {
     println!("{rendered}");
 
     let e = girders_json::decode(r#"{"name": "x", "#, &config_codec()).unwrap_err();
-    assert!(matches!(e.problem(), Problem::Syntax(_)));
+    assert!(matches!(
+        e.problem(),
+        Problem::Format(girders_json::Malformed::UnexpectedEnd)
+    ));
 
     // Accumulate mode reports every problem at once.
     let input = r#"{"name": 1, "server": {"host": 2, "port": "x"}, "extra": true}"#;

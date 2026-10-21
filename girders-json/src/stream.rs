@@ -9,7 +9,7 @@
 
 use crate::reader::JsonReader;
 use crate::source::PushSource;
-use girders::{DecodeContext, DecodeError, DecodeOptions, Decoder, Reader, Span};
+use girders::{DecodeContext, DecodeOptions, Decoder, Reader};
 
 /// Decodes a sequence of whitespace-separated top-level values (NDJSON
 /// and friends) from pushed chunks.
@@ -52,7 +52,7 @@ impl<C: Decoder> StreamDecoder<C> {
     /// stream is finished), or the error. After an error the stream
     /// cannot continue.
     #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> Option<Result<C::Output, DecodeError<Span>>> {
+    pub fn next(&mut self) -> Option<Result<C::Output, crate::Error>> {
         match self.reader.at_end() {
             Ok(true) => return None,
             Ok(false) => {}

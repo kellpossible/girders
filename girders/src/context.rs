@@ -147,10 +147,10 @@ impl DecodeContext {
 
     /// Run `f` one container level deeper, enforcing `max_depth`.
     #[inline]
-    pub fn nested<L, T>(
+    pub fn nested<L, E, T>(
         &mut self,
-        f: impl FnOnce(&mut Self) -> Result<T, crate::DecodeError<L>>,
-    ) -> Result<T, crate::DecodeError<L>> {
+        f: impl FnOnce(&mut Self) -> Result<T, crate::DecodeError<L, E>>,
+    ) -> Result<T, crate::DecodeError<L, E>> {
         if let Some(max) = self.options.max_depth
             && self.depth >= max
         {

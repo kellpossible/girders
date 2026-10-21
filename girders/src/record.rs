@@ -104,9 +104,9 @@ fn encode_optional_field<C: Encoder<Input: Sized> + ?Sized, S: Serializer + ?Siz
 }
 
 /// Shared state for one record decode.
-pub struct RecordDecodeState<'a, L> {
+pub struct RecordDecodeState<'a, L, E> {
     pub duplicates: Duplicates,
-    pub errs: &'a mut Collector<L>,
+    pub errs: &'a mut Collector<L, E>,
 }
 
 /// A set of fields reading from (and building) `Self::RecordType`.
@@ -130,7 +130,7 @@ pub trait Fields {
         r: &mut R,
         cx: &mut DecodeContext,
         slots: &mut Self::Slots,
-        record_state: &mut RecordDecodeState<'_, R::Location>,
+        record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     ) -> DecodeResult<(), R>;
     /// Decode a key no field claimed (only `unknown_fields` does this).
     fn decode_extra<R: Reader + ?Sized>(
@@ -139,7 +139,7 @@ pub trait Fields {
         _r: &mut R,
         _cx: &mut DecodeContext,
         _slots: &mut Self::Slots,
-        _record_state: &mut RecordDecodeState<'_, R::Location>,
+        _record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     ) -> DecodeResult<bool, R> {
         Ok(false)
     }
@@ -162,10 +162,10 @@ pub trait Fields {
 
 #[cold]
 #[inline(never)]
-fn missing<L: Clone>(
+fn missing<L: Clone, E>(
     name: &'static str,
     cx: &DecodeContext,
-    errs: &mut Collector<L>,
+    errs: &mut Collector<L, E>,
     at: &Option<L>,
 ) {
     // Fail-fast reports only the first problem.
@@ -184,7 +184,7 @@ fn on_duplicate<R: Reader + ?Sized>(
     name: &'static str,
     r: &mut R,
     cx: &DecodeContext,
-    record_state: &mut RecordDecodeState<'_, R::Location>,
+    record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
 ) -> DecodeResult<bool, R> {
     match record_state.duplicates {
         Duplicates::LastWins => Ok(true),
@@ -215,7 +215,7 @@ fn decode_into<R: Reader + ?Sized, C: Decoder>(
     r: &mut R,
     cx: &mut DecodeContext,
     slot: &mut Slot<C::Output>,
-    record_state: &mut RecordDecodeState<'_, R::Location>,
+    record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
 ) -> DecodeResult<(), R> {
     if !matches!(slot, Slot::Empty) && !on_duplicate(name, r, cx, record_state)? {
         return Ok(());
@@ -249,9 +249,9 @@ fn field_failed<R: Reader + ?Sized>(
     name: &'static str,
     r: &mut R,
     cx: &DecodeContext,
-    record_state: &mut RecordDecodeState<'_, R::Location>,
+    record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     cp: Option<R::Checkpoint>,
-    e: DecodeError<R::Location>,
+    e: DecodeError<R::Location, R::Error>,
 ) -> DecodeResult<(), R> {
     let e = at_seg(e, cx, || PathSegment::Key(name.into()));
     let Some(cp) = cp else { return Err(e) };
@@ -324,7 +324,7 @@ impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &C::Output> Fiel
         r: &mut R,
         cx: &mut DecodeContext,
         slot: &mut Self::Slots,
-        record_state: &mut RecordDecodeState<'_, R::Location>,
+        record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     ) -> DecodeResult<(), R> {
         decode_into(self.name, &self.codec, r, cx, slot, record_state)
     }
@@ -410,7 +410,7 @@ where
         r: &mut R,
         cx: &mut DecodeContext,
         slot: &mut Self::Slots,
-        record_state: &mut RecordDecodeState<'_, R::Location>,
+        record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     ) -> DecodeResult<(), R> {
         decode_into(
             self.inner.name,
@@ -516,7 +516,7 @@ impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &Option<C::Outpu
         r: &mut R,
         cx: &mut DecodeContext,
         slot: &mut Self::Slots,
-        record_state: &mut RecordDecodeState<'_, R::Location>,
+        record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     ) -> DecodeResult<(), R> {
         decode_into(
             self.name,
@@ -618,7 +618,7 @@ impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &Vec<(String, C:
         r: &mut R,
         cx: &mut DecodeContext,
         slot: &mut Self::Slots,
-        record_state: &mut RecordDecodeState<'_, R::Location>,
+        record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     ) -> DecodeResult<(), R> {
         let _ = (r, cx, slot, record_state);
         Ok(())
@@ -629,7 +629,7 @@ impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &Vec<(String, C:
         r: &mut R,
         cx: &mut DecodeContext,
         slots: &mut Self::Slots,
-        record_state: &mut RecordDecodeState<'_, R::Location>,
+        record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     ) -> DecodeResult<bool, R> {
         let k = String::from(key);
         match child(
@@ -734,7 +734,7 @@ impl<Outer, InnerRecord: RecordCodec, G: Fn(&Outer) -> &InnerRecord::Output> Fie
         r: &mut R,
         cx: &mut DecodeContext,
         slots: &mut Self::Slots,
-        record_state: &mut RecordDecodeState<'_, R::Location>,
+        record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     ) -> DecodeResult<(), R> {
         self.inner.fields().decode_at(i, r, cx, slots, record_state)
     }
@@ -744,7 +744,7 @@ impl<Outer, InnerRecord: RecordCodec, G: Fn(&Outer) -> &InnerRecord::Output> Fie
         r: &mut R,
         cx: &mut DecodeContext,
         slots: &mut Self::Slots,
-        record_state: &mut RecordDecodeState<'_, R::Location>,
+        record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
     ) -> DecodeResult<bool, R> {
         self.inner
             .fields()
@@ -794,7 +794,7 @@ macro_rules! tuple_fields {
                 r: &mut R,
                 cx: &mut DecodeContext,
                 slots: &mut Self::Slots,
-                record_state: &mut RecordDecodeState<'_, R::Location>,
+                record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
             ) -> DecodeResult<(), R> {
                 #[allow(unused_mut)]
                 let mut i = i;
@@ -817,7 +817,7 @@ macro_rules! tuple_fields {
                 r: &mut R,
                 cx: &mut DecodeContext,
                 slots: &mut Self::Slots,
-                record_state: &mut RecordDecodeState<'_, R::Location>,
+                record_state: &mut RecordDecodeState<'_, R::Location, R::Error>,
             ) -> DecodeResult<bool, R> {
                 if $T0::CLAIMS_UNKNOWN_KEYS {
                     if self.0.decode_extra(key, r, cx, &mut slots.0, record_state)? {
@@ -926,13 +926,13 @@ pub struct Record<F, B> {
 impl<F: Fields, B: Build<F>> Record<F, B> {
     /// Check for missing fields, then build the record.
     #[inline]
-    fn complete<L: Clone>(
+    fn complete<L: Clone, E>(
         &self,
         slots: F::Slots,
         cx: &DecodeContext,
-        mut errs: Collector<L>,
+        mut errs: Collector<L, E>,
         at: &Option<L>,
-    ) -> Result<F::RecordType, DecodeError<L>> {
+    ) -> Result<F::RecordType, DecodeError<L, E>> {
         let ok = self
             .fields
             .check(&slots, &mut |name| missing(name, cx, &mut errs, at));
@@ -949,7 +949,7 @@ type OnKey<'a, R> = dyn FnMut(
         &str,
         &mut R,
         &mut DecodeContext,
-        &mut Collector<<R as Reader>::Location>,
+        &mut Collector<<R as Reader>::Location, <R as Reader>::Error>,
     ) -> DecodeResult<bool, R>
     + 'a;
 
@@ -960,7 +960,7 @@ fn record_loop<R: Reader + ?Sized>(
     cx: &mut DecodeContext,
     names: &[&'static str],
     allow_unknown: bool,
-    errs: &mut Collector<R::Location>,
+    errs: &mut Collector<R::Location, R::Error>,
     on_key: &mut OnKey<'_, R>,
 ) -> DecodeResult<(), R> {
     let claimed = cx.take_claimed();

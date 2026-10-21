@@ -67,7 +67,7 @@ impl Decoder for ValueCodec {
         &self,
         r: &mut R,
         cx: &mut DecodeContext,
-    ) -> Result<Value, DecodeError<R::Location>> {
+    ) -> Result<Value, DecodeError<R::Location, R::Error>> {
         decode_value(r, cx)
     }
 }
@@ -75,7 +75,7 @@ impl Decoder for ValueCodec {
 fn decode_value<R: Reader + ?Sized>(
     r: &mut R,
     cx: &mut DecodeContext,
-) -> Result<Value, DecodeError<R::Location>> {
+) -> Result<Value, DecodeError<R::Location, R::Error>> {
     Ok(match r.peek_kind()? {
         Kind::Number => match r.read_number()? {
             Number::I64(i) => Value::Integer(i as i128),

@@ -8,6 +8,7 @@
 //! `Problem::Incomplete` so a streaming driver can wait and retry.
 
 use crate::bignum;
+use crate::malformed::Malformed;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -16,7 +17,7 @@ use girders::half;
 use girders::source::{SliceSource, Source};
 use girders::{DecodeError, Kind, Number, Problem, Reader, Span};
 
-type CborError = DecodeError<Span>;
+type CborError = DecodeError<Span, Malformed>;
 type CborResult<T> = Result<T, CborError>;
 
 /// The "break" stop code that ends indefinite-length items.
@@ -174,7 +175,7 @@ impl<S: Source> CborReader<S> {
         }
     }
 
-    /// Make `n` bytes available, or fail with "unexpected end of input".
+    /// Make `n` bytes available, or fail with Malformed::UnexpectedEnd.
     fn need(&mut self, n: usize) -> CborResult<()> {
         if self.ensure(n)? {
             Ok(())
@@ -207,13 +208,13 @@ impl<S: Source> CborReader<S> {
 
     // -- errors --------------------------------------------------------------------
 
-    fn syntax(&self, at: u64, message: &str) -> CborError {
-        DecodeError::at(Problem::Syntax(message.into()), Some(Span::point(at)))
+    fn syntax(&self, at: u64, error: Malformed) -> CborError {
+        DecodeError::at(Problem::Format(error), Some(Span::point(at)))
     }
 
     fn end_of_input(&self) -> CborError {
         let end = self.base + self.src.buf().len() as u64;
-        self.syntax(end, "unexpected end of input")
+        self.syntax(end, Malformed::UnexpectedEnd)
     }
 
     fn kind_of(&self, head: Head) -> CborResult<Kind> {
@@ -228,7 +229,7 @@ impl<S: Source> CborReader<S> {
                 20 | 21 => Kind::Bool,
                 22 => Kind::Null,
                 25..=27 => Kind::Number,
-                31 => return Err(self.syntax(self.offset(), "unexpected break stop code")),
+                31 => return Err(self.syntax(self.offset(), Malformed::UnexpectedBreak)),
                 _ => Kind::Simple,
             },
         })
@@ -309,16 +310,16 @@ impl<S: Source> CborReader<S> {
                     1 + n,
                 )
             }
-            28..=30 => return Err(self.syntax(at, "reserved additional information value")),
+            28..=30 => return Err(self.syntax(at, Malformed::ReservedAdditionalInformation)),
             _ => {
                 if matches!(major, 0 | 1 | 6) {
-                    return Err(self.syntax(at, "indefinite length is not allowed here"));
+                    return Err(self.syntax(at, Malformed::IndefiniteLengthNotAllowed));
                 }
                 (0, 1)
             }
         };
         if major == 7 && info == 24 && arg < 32 {
-            return Err(self.syntax(at, "simple value below 32 in two-byte form"));
+            return Err(self.syntax(at, Malformed::TwoByteSimpleValueBelow32));
         }
         Ok(Head {
             major,
@@ -345,7 +346,7 @@ impl<S: Source> CborReader<S> {
                 Ok(text) => out.push_str(text),
                 Err(e) => {
                     let at = self.base + (range.start + e.valid_up_to()) as u64;
-                    return Err(self.syntax(at, "invalid UTF-8 in a text string"));
+                    return Err(self.syntax(at, Malformed::InvalidUtf8));
                 }
             },
             Sink::Bytes(out) => out.extend_from_slice(bytes),
@@ -382,10 +383,7 @@ impl<S: Source> CborReader<S> {
             }
             let part = self.peek_head()?;
             if part.major != major || part.indefinite() {
-                return Err(self.syntax(
-                    self.offset(),
-                    "indefinite-length string chunks must be definite strings of the same type",
-                ));
+                return Err(self.syntax(self.offset(), Malformed::InvalidStringChunk));
             }
             self.pos += part.len;
             let range = self.take(part.arg)?;
@@ -415,18 +413,22 @@ impl<S: Source> CborReader<S> {
                 self.pos += head.len;
                 let pair = self.peek_head()?;
                 if pair.major != 4 || pair.indefinite() || pair.arg != 2 {
-                    return Err(self.syntax(at, "a decimal fraction is a two-element array"));
+                    return Err(self.syntax(at, Malformed::DecimalFractionNotAPair));
                 }
                 self.pos += pair.len;
                 let exponent = match self.read_numeric("integer")? {
                     n @ (Numeric::Unsigned(_) | Numeric::Negative(_)) => Self::text_of(n),
-                    _ => return Err(self.syntax(at, "a decimal fraction's exponent is an integer")),
+                    _ => {
+                        return Err(self.syntax(at, Malformed::DecimalFractionExponentNotAnInteger));
+                    }
                 };
                 let mantissa = match self.read_numeric("integer")? {
                     n @ (Numeric::Unsigned(_) | Numeric::Negative(_) | Numeric::Big { .. }) => {
                         Self::text_of(n)
                     }
-                    _ => return Err(self.syntax(at, "a decimal fraction's mantissa is an integer")),
+                    _ => {
+                        return Err(self.syntax(at, Malformed::DecimalFractionMantissaNotAnInteger));
+                    }
                 };
                 let text = if exponent == "0" {
                     mantissa
@@ -528,26 +530,24 @@ impl<S: Source> CborReader<S> {
                 Some(BREAK) => Ok(false),
                 Some(_) => Ok(true),
             },
-            None => Err(self.syntax(self.offset(), "no array or map is open")),
+            None => Err(self.syntax(self.offset(), Malformed::NoContainerOpen)),
         }
     }
 
-    fn close(&mut self, what: &str) -> CborResult<()> {
+    fn close(&mut self, what: Malformed) -> CborResult<()> {
         match self.stack.last() {
             Some(Frame::Definite(0)) => {}
             Some(Frame::Definite(_)) => {
-                return Err(self.syntax(self.offset(), &alloc::format!("{what} has more items")));
+                return Err(self.syntax(self.offset(), what));
             }
             Some(Frame::Indefinite) => match self.peek_byte()? {
                 Some(BREAK) => self.pos += 1,
                 None => return Err(self.end_of_input()),
                 Some(_) => {
-                    return Err(
-                        self.syntax(self.offset(), &alloc::format!("{what} has more items"))
-                    );
+                    return Err(self.syntax(self.offset(), what));
                 }
             },
-            None => return Err(self.syntax(self.offset(), "no array or map is open")),
+            None => return Err(self.syntax(self.offset(), Malformed::NoContainerOpen)),
         }
         self.stack.pop();
         Ok(())
@@ -556,11 +556,12 @@ impl<S: Source> CborReader<S> {
 
 impl<S: Source> Reader for CborReader<S> {
     type Location = Span;
+    type Error = Malformed;
     type Checkpoint = CborCheckpoint;
 
     fn peek_kind(&mut self) -> CborResult<Kind> {
         if !self.ensure(1)? {
-            return Ok(Kind::Eof);
+            return Err(self.end_of_input());
         }
         let head = self.peek_head()?;
         self.kind_of(head)
@@ -713,7 +714,7 @@ impl<S: Source> Reader for CborReader<S> {
     }
 
     fn end_array(&mut self) -> CborResult<()> {
-        self.close("array")
+        self.close(Malformed::ArrayHasMoreItems)
     }
 
     fn begin_object(&mut self) -> CborResult<()> {
@@ -739,7 +740,7 @@ impl<S: Source> Reader for CborReader<S> {
     }
 
     fn end_object(&mut self) -> CborResult<()> {
-        self.close("map")
+        self.close(Malformed::MapHasMoreItems)
     }
 
     fn skip_value(&mut self) -> CborResult<()> {
@@ -769,9 +770,7 @@ impl<S: Source> Reader for CborReader<S> {
                         None => return Err(self.end_of_input()),
                         Some(BREAK) => {
                             if map && in_entry {
-                                return Err(
-                                    self.syntax(self.offset(), "break in a map's value position")
-                                );
+                                return Err(self.syntax(self.offset(), Malformed::BreakInMapValue));
                             }
                             self.pos += 1;
                             levels.pop();
@@ -786,7 +785,7 @@ impl<S: Source> Reader for CborReader<S> {
             }
             let head = self.peek_head()?;
             if head.is_break() {
-                return Err(self.syntax(self.offset(), "unexpected break stop code"));
+                return Err(self.syntax(self.offset(), Malformed::UnexpectedBreak));
             }
             let opened = match head.major {
                 2 | 3 => {

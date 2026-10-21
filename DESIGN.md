@@ -115,7 +115,7 @@ girder-rs/                    (directory name unchanged)
     src/
       lib.rs
       span.rs                 Span, Spanned<T>
-      error.rs                DecodeError<L>, Problem, PathSegment, Errors
+      error.rs                DecodeError<L, F>, Problem<F>, CustomError, Invalid, PathSegment
       options.rs              DecodeOptions
       reader.rs               trait Reader, Kind, Checkpoint
       serializer.rs           trait Serializer
@@ -173,6 +173,8 @@ pub trait Reader {
     /// What an error points at. JSON: `Span` (byte range). An env-var
     /// reader: the variable name. A binary format might use `()`.
     type Location: Clone + Debug;
+    /// The format's own errors, such as `girders_json::Malformed` (§5.1).
+    type Error: FormatError;
     type Checkpoint;
 
     fn peek_kind(&mut self) -> Result<Spanned<Kind, Self::Location>, DecodeError<Self::Location>>;
@@ -200,13 +202,15 @@ pub trait Reader {
     /// Location of the value most recently read, if tracking is on.
     fn last_location(&self) -> Option<Self::Location>;
 }
-// R<T> = Result<T, DecodeError<Self::Location>>
+// R<T> = DecodeResult<T, Self> = Result<T, DecodeError<Self::Location, Self::Error>>
 ```
 
 Notes:
 
-- **`Kind`** is the same enum as in Gleam: String, Number, Bool, Null,
-  Array, Object, Eof.
+- **`Kind`** is Gleam's enum (String, Number, Bool, Null, Array, Object)
+  plus Bytes, Tag and Simple for binary formats. Gleam's `Eof` is gone:
+  running out of input where a value must follow is the format's
+  "unexpected end" error, never a type mismatch.
 - **Strings are read into a buffer the caller supplies.** That is the
   natural shape for a streaming reader, and it lets record decoding reuse
   one key buffer instead of allocating per key.
@@ -313,28 +317,72 @@ This uses the same per-element framing as Gleam. Differences:
 ### 5.1 Shape
 
 ```rust
-pub struct DecodeError<L> (Box<Inner<L>>);   // keeps Result<T, E> small
-struct Inner<L> {
-    path: Vec<PathSegment>,        // built innermost-first, reversed for display
-    location: Option<L>,
-    problem: Problem,
-    context: Vec<ContextFrame<L>>,
+pub struct DecodeError<L, F>(Box<(ErrorDetail<L, F>, Vec<ErrorDetail<L, F>>)>);
+pub struct ErrorDetail<L, F> {
+    path_rev: Vec<PathSegment>,    // built innermost-first, reversed for display
+    pub location: Option<L>,
+    pub problem: Problem<F>,
+    pub context: Vec<ContextFrame<L>>,
 }
 pub enum PathSegment { Key(String), Index(usize) }
-pub enum Problem {
-    TypeMismatch { expected: Cow<'static, str>, found: Kind },
-    MissingField(String),
+#[non_exhaustive]
+pub enum Problem<F> {
+    TypeMismatch { expected: Cow<'static, str>, found: Cow<'static, str> },
+    MissingField(Cow<'static, str>),
     UnknownField { name: String, expected: Vec<&'static str> },
-    DuplicateField(String),               // new: strict default (§6.4)
-    UnknownVariant { name: String, expected: Vec<String> },
-    UnknownVersion { found: String, known: Vec<String> },  // new (§8)
-    ValidationFailed(String),
+    DuplicateField(String),               // strict default (§6.4)
+    UnknownVariant { name: String, expected: Vec<&'static str> },
+    UnknownVersion { found: String, known: Vec<String> },  // (§8)
     OutOfRange(String),
-    Syntax(String),
-    DepthLimitExceeded(usize),             // new (§5.4)
+    Format(F),                            // the format's own errors
+    Custom(CustomError),                  // application and third-party errors
+    DepthLimitExceeded(usize),            // (§5.4)
+    Io(String),
+    Unsupported(Cow<'static, str>),
     Incomplete,
 }
 ```
+
+`DecodeError` has two type parameters: `L`, the reader's location, and
+`F`, its format error. Errors are split three ways, so that each can be
+matched by type rather than by message (parse, don't validate):
+
+1. **girders' own problems** are the `Problem` variants: the type is
+   wrong, a field is missing, a number doesn't fit.
+2. **Format errors** come from the reader, as its associated
+   `Reader::Error: FormatError`. Each format has an enum of its own:
+   `girders_json::Malformed` (`UnexpectedCharacter(b'@')`,
+   `InvalidEscape(b'q')`, `LoneHighSurrogate(0xd800)`, …) and
+   `girders_cbor::Malformed` (`ReservedAdditionalInformation`,
+   `UnexpectedBreak`, …; the tests check every RFC 8949 Appendix F
+   example against its kind). Combinators never construct them: they
+   pass whatever `F` is through. A format with none uses `Infallible`.
+   `FormatError::is_fatal` defaults to true.
+3. **Application errors** are `Problem::Custom(CustomError)`. A
+   `CustomError` boxes any `core::error::Error + Send + Sync`
+   (`Box<dyn Error>` works in `no_std` since `core::error::Error`, Rust
+   1.81). Validators (`refine`, `try_convert`, `try_map`, `fail`) take
+   any `E: Into<BoxedError>`, which covers your own error types, `&str`
+   and `String`. The original value comes back with
+   `error.custom::<T>()` (first match), `error.custom_errors::<T>()`
+   (every match, with its `ErrorDetail` for path and location) or
+   `CustomError::downcast_ref`. Custom errors from validators are
+   recoverable; a custom codec can report `CustomError::fatal(...)` to
+   stop accumulation and `one_of`.
+
+Compared with serde's `de::Error::custom(msg)`, nothing is flattened to a
+string: the format's errors are a concrete enum in the error type, and
+the application's errors keep their own type behind one downcast.
+
+**Cross-field rules.** A validator that checks a whole record can say
+which field is at fault: `Err(Invalid::at("end", RangeError::EndBeforeStart))`
+reports the `RangeError` at `window.end` instead of `window`. `Invalid`
+nests (`Invalid::at("items", Invalid::at(3, e))` → `items[3]`), and is
+unwrapped when the error is recorded, so `custom::<RangeError>()` finds
+the inner error. Its location stays the validated value's span.
+`girders-json/examples/08_parse_dont_validate.rs` puts this together:
+newtypes with `parse` constructors, a cross-field rule, and every error
+mapped to its form field in accumulate mode.
 
 The location type is generic, so every format chooses what "where"
 means. *Spike:* one `user()` codec decoded from a token reader (location
@@ -364,11 +412,13 @@ In accumulate mode:
 - A record keeps going after a field fails: it skips that value, carries
   on with the remaining keys, and returns every error found.
 - Lists keep going after a bad element.
-- A failure returns `Errors<L>` (a non-empty `Vec<DecodeError<L>>`).
+- A failure returns every error in one `DecodeError` (iterate with
+  `.iter()`, count with `.len()`).
 
-Fail-fast mode returns a single error in the same type. Syntax errors
-and `Incomplete` always stop decoding, because nothing after them can be
-trusted.
+Fail-fast mode returns a single error in the same type. Fatal errors
+(`Problem::is_fatal`: format errors, fatal custom errors, the depth
+limit, I/O and `Incomplete`) always stop decoding, because nothing after
+them can be trusted.
 
 ### 5.4 Decode options
 
@@ -1010,7 +1060,8 @@ workflow is worth having as a dev-only dependency.
 
 The 7 Gleam examples are ported to `girders-json/examples/*.rs`:
 record, tagged_union, collections, validation, error_reporting,
-dynamic_value, pretty_printing. Each one asserts its own output, and CI
+dynamic_value, pretty_printing. An eighth, parse_dont_validate, shows
+the typed error model (§5.1). Each one asserts its own output, and CI
 runs them with `cargo run --example`. They are the acceptance suite and
 the main place to compare ergonomics with Gleam.
 
@@ -1152,6 +1203,7 @@ These were implemented as recommended, and the evidence supports them.
 | ~~N7~~ | `None` in optional fields | **Decided:** written as `null` by default (serde and Gleam parity); `.skip_none()` omits the key. |
 | N8 | Remaining decode gap of 1.3–1.9× | Next levers: (a) dispatch records by key length or first byte instead of a linear compare chain; (b) a whole-buffer fast path for scanning slices; (c) number lexing without per-byte `peek`. Worth pursuing in a throwaway, or stop here? |
 | ~~N10~~ | Encoding strategy | **Decided: encoding stays inline (generic over the serializer).** Out-of-line child calls, a `dyn` serializer, and both together were measured (RESULTS.md, "Encoding strategy"). They save at most 5.6% of release compile instructions and 2% of binary text, but every variant makes debug builds 0.9–1.3% slower and encoding up to 12% slower. Debug build time is the priority. |
+| ~~N11~~ | Typed errors | **Done.** Format errors are a type parameter from the reader (`Problem::Format(F)`, a `Malformed` enum per format); application errors are `Problem::Custom`, recovered by type with `custom::<T>()`; `Invalid::at` for cross-field rules (§5.1). `ValidationFailed(String)` and `Syntax(String)` are gone. |
 | N9 | Gleam comparison | Not run. The corpus is plain JSON in `benches/data`, ready for the Gleam side. |
 
 ## 15. Where the implementation departs from the text

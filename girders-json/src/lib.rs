@@ -24,6 +24,7 @@
 extern crate alloc;
 
 pub mod diagnostic;
+pub mod malformed;
 pub mod pointer;
 pub mod reader;
 pub mod serializer;
@@ -31,6 +32,7 @@ pub mod source;
 pub mod stream;
 pub mod value;
 
+pub use malformed::Malformed;
 pub use pointer::Pointer;
 pub use reader::JsonReader;
 pub use serializer::{EncodeError, JsonSerializer, Style};
@@ -45,7 +47,8 @@ use girders::{
     Span,
 };
 
-pub type Error = DecodeError<Span>;
+/// A decode error from JSON input.
+pub type Error = DecodeError<Span, Malformed>;
 
 /// Decode a complete document with default options.
 pub fn decode<C: Decoder + ?Sized>(input: &str, codec: &C) -> Result<C::Output, Error> {
@@ -90,7 +93,7 @@ pub fn decode_source<S: Source, C: Decoder + ?Sized>(
     if !r.at_end()? {
         let at = r.here();
         return Err(DecodeError::at(
-            Problem::Syntax("trailing input after value".into()),
+            Problem::Format(Malformed::TrailingInput),
             at,
         ));
     }
@@ -184,4 +187,4 @@ pub fn to_pointer(err: &Error) -> Pointer {
 /// The JSON reader as a trait object. Decoding goes through this so the
 /// reader's code exists once, shared by every codec.
 pub(crate) type DynReader<'a> =
-    dyn Reader<Location = Span, Checkpoint = reader::JsonCheckpoint> + 'a;
+    dyn Reader<Location = Span, Error = Malformed, Checkpoint = reader::JsonCheckpoint> + 'a;

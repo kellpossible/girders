@@ -48,14 +48,14 @@ impl EnvReader {
 
 impl Reader for EnvReader {
     type Location = String;
+    type Error = core::convert::Infallible;
     type Checkpoint = (usize, bool);
     fn peek_kind(&mut self) -> DecodeResult<Kind, Self> {
-        Ok(if !self.opened {
-            Kind::Object
-        } else if self.in_value {
+        // Every variable's value is text.
+        Ok(if self.opened {
             Kind::String
         } else {
-            Kind::Eof
+            Kind::Object
         })
     }
     fn here(&mut self) -> Option<String> {
@@ -154,7 +154,10 @@ fn config() -> impl Codec<Output = Config> {
     .build(|(host, port, debug)| Config { host, port, debug })
 }
 
-fn decode(vars: &[(&str, &str)], options: DecodeOptions) -> Result<Config, DecodeError<String>> {
+fn decode(
+    vars: &[(&str, &str)],
+    options: DecodeOptions,
+) -> Result<Config, DecodeError<String, core::convert::Infallible>> {
     config().decode(&mut EnvReader::new(vars), &mut DecodeContext::new(options))
 }
 

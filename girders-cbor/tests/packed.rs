@@ -90,9 +90,12 @@ fn packed_arrays_check_the_tag_and_the_length() {
     assert!(err.to_string().contains("tag 85"), "{err}");
     // Five bytes cannot hold uint16s.
     let err = decode(&hex("d8 45 45 0100020003"), &packed(u16())).unwrap_err();
-    assert!(
-        matches!(err.problem(), Problem::ValidationFailed(_)),
-        "{err}"
+    assert_eq!(
+        err.custom::<girders::packed::TypedArrayLengthError>(),
+        Some(&girders::packed::TypedArrayLengthError {
+            element_size: 2,
+            length: 5
+        })
     );
     // Elements of a plain array are range-checked as usual.
     assert!(decode(&hex("81 1a 00010000"), &packed(u16())).is_err());

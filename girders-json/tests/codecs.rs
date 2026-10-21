@@ -33,6 +33,8 @@ mod e05;
 mod e06;
 #[path = "../examples/07_pretty_printing.rs"]
 mod e07;
+#[path = "../examples/08_parse_dont_validate.rs"]
+mod e08;
 
 #[test]
 fn examples() {
@@ -43,6 +45,7 @@ fn examples() {
     e05::main();
     e06::main();
     e07::main();
+    e08::main();
 }
 
 // -- records -------------------------------------------------------------------
@@ -243,7 +246,7 @@ fn accumulate_stops_at_syntax_errors() {
     let e = acc(&list(user()), r#"[{"id":1,"age":2}, {"id": tru}]"#);
     assert!(matches!(
         e.iter().last().unwrap().problem,
-        Problem::Syntax(_)
+        Problem::Format(girders_json::Malformed::InvalidLiteral)
     ));
 }
 
@@ -587,9 +590,10 @@ fn from_reader_any_chunk_size() {
 
 #[test]
 fn trailing_input_is_an_error() {
-    assert!(
-        matches!(dec(&u32(), "1 2").unwrap_err().problem(), Problem::Syntax(m) if m.contains("trailing"))
-    );
+    assert!(matches!(
+        dec(&u32(), "1 2").unwrap_err().problem(),
+        Problem::Format(girders_json::Malformed::TrailingInput)
+    ));
 }
 
 // -- diagnostics (snapshots ported from the Gleam birdie suite) -------------------------

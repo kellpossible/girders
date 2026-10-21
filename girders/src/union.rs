@@ -183,13 +183,13 @@ variants!(Of10; C0 K0 Variant0 0, C1 K1 Variant1 1, C2 K2 Variant2 2, C3 K3 Vari
 variants!(Of11; C0 K0 Variant0 0, C1 K1 Variant1 1, C2 K2 Variant2 2, C3 K3 Variant3 3, C4 K4 Variant4 4, C5 K5 Variant5 5, C6 K6 Variant6 6, C7 K7 Variant7 7, C8 K8 Variant8 8, C9 K9 Variant9 9, C10 K10 V10 10);
 variants!(Of12; C0 K0 Variant0 0, C1 K1 Variant1 1, C2 K2 Variant2 2, C3 K3 Variant3 3, C4 K4 Variant4 4, C5 K5 Variant5 5, C6 K6 Variant6 6, C7 K7 Variant7 7, C8 K8 Variant8 8, C9 K9 Variant9 9, C10 K10 V10 10, C11 K11 V11 11);
 
-fn unknown_variant<L>(
+fn unknown_variant<L, E>(
     tag_key: &'static str,
     found: String,
     expected: Vec<&'static str>,
     cx: &DecodeContext,
     at: Option<L>,
-) -> DecodeError<L> {
+) -> DecodeError<L, E> {
     let e = DecodeError::at(
         Problem::UnknownVariant {
             name: found,
@@ -454,7 +454,7 @@ pub fn one_of<Ds>(decoders: Ds) -> OneOf<Ds> {
     OneOf(decoders)
 }
 
-fn deeper<L>(a: Option<DecodeError<L>>, b: DecodeError<L>) -> DecodeError<L> {
+fn deeper<L, E>(a: Option<DecodeError<L, E>>, b: DecodeError<L, E>) -> DecodeError<L, E> {
     match a {
         Some(a) if a.first().path_len() >= b.first().path_len() => a,
         _ => b,
@@ -467,7 +467,7 @@ macro_rules! one_of_impl {
             type Output = $D0::Output;
             fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Self::Output, R> {
                 let cp = r.checkpoint();
-                let mut best: Option<DecodeError<R::Location>> = None;
+                let mut best: Option<DecodeError<R::Location, R::Error>> = None;
                 match decode_child(&(self.0).0, r, cx) {
                     Ok(v) => { r.release(cp); return Ok(v); }
                     Err(e) if e.is_fatal() => { r.release(cp); return Err(e); }

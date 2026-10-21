@@ -21,10 +21,10 @@ fn main() {
     println!("serde_json Value:       {}", size_of::<serde_json::Value>());
     println!(
         "DecodeError<Span>:      {}",
-        size_of::<girders::DecodeError<girders::Span>>()
+        size_of::<girders_json::Error>()
     );
     println!(
         "Result<u64, DecodeError<Span>>: {}",
-        size_of::<Result<u64, girders::DecodeError<girders::Span>>>()
+        size_of::<Result<u64, girders_json::Error>>()
     );
 }

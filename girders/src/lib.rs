@@ -35,9 +35,11 @@ pub mod versioned;
 
 pub use codec::{Codec, Decoder, Encoder, decode_child};
 pub use context::{DecodeContext, DecodeOptions, EncodeContext, TagValue};
-pub use error::{DecodeError, ErrorDetail, PathSegment, Problem};
+pub use error::{
+    BoxedError, CustomError, DecodeError, ErrorDetail, FormatError, Invalid, PathSegment, Problem,
+};
 pub use number::Number;
-pub use reader::{Kind, Reader};
+pub use reader::{DecodeResult, Kind, Reader};
 pub use serializer::Serializer;
 pub use span::{Span, Spanned};
 
@@ -46,7 +48,7 @@ pub mod prelude {
     pub use crate::codec::*;
     pub use crate::collections::*;
     pub use crate::context::{DecodeContext, DecodeOptions, EncodeContext};
-    pub use crate::error::{DecodeError, PathSegment, Problem};
+    pub use crate::error::{CustomError, DecodeError, Invalid, PathSegment, Problem};
     pub use crate::packed::packed;
     pub use crate::reader::{Kind, Reader};
     pub use crate::record::{

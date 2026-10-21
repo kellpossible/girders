@@ -1,6 +1,6 @@
 //! The format-side contract for decoding.
 
-use crate::error::{DecodeError, Problem};
+use crate::error::{DecodeError, FormatError, Problem};
 use crate::number::Number;
 use crate::span::Span;
 use alloc::string::String;
@@ -25,7 +25,6 @@ pub enum Kind {
     /// A simple value other than `true`, `false` and `null`, such as
     /// CBOR's `undefined`.
     Simple,
-    Eof,
 }
 
 impl Kind {
@@ -40,12 +39,11 @@ impl Kind {
             Kind::Bytes => "bytes",
             Kind::Tag => "tag",
             Kind::Simple => "simple value",
-            Kind::Eof => "end of input",
         }
     }
 }
 
-pub type DecodeResult<T, R> = Result<T, DecodeError<<R as Reader>::Location>>;
+pub type DecodeResult<T, R> = Result<T, DecodeError<<R as Reader>::Location, <R as Reader>::Error>>;
 
 /// A pull reader over some input. Implemented by a mutable cursor; all
 /// primitives skip insignificant whitespace (or the format's equivalent)
@@ -57,6 +55,9 @@ pub trait Reader {
     /// What an error points at: a byte span for JSON, a variable name for
     /// an env reader, `()` for a format with no positional notion.
     type Location: Clone + Debug;
+    /// The format's own errors (see [`FormatError`]): JSON syntax, CBOR
+    /// well-formedness, and so on. `Infallible` if it has none.
+    type Error: FormatError;
     /// An opaque position to return to. For streaming sources, an
     /// outstanding checkpoint keeps the input from that point buffered.
     /// Released in LIFO order.
@@ -163,7 +164,10 @@ pub trait Reader {
 
 /// Shorthand for `TypeMismatch` at the next value, against what the
 /// reader actually sees. Used by readers and combinators.
-pub fn mismatch<R: Reader + ?Sized>(r: &mut R, expected: &'static str) -> DecodeError<R::Location> {
+pub fn mismatch<R: Reader + ?Sized>(
+    r: &mut R,
+    expected: &'static str,
+) -> DecodeError<R::Location, R::Error> {
     let found = match r.peek_kind() {
         Ok(k) => k.name(),
         Err(e) => return e,

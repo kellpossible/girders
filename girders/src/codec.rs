@@ -1,7 +1,7 @@
 //! The codec traits, primitives and the basic combinators.
 
 use crate::context::{DecodeContext, EncodeContext};
-use crate::error::{ContextFrame, DecodeError, Problem};
+use crate::error::{BoxedError, ContextFrame, DecodeError, Problem};
 use crate::reader::{Kind, Reader};
 use crate::serializer::Serializer;
 use crate::span::Spanned;
@@ -9,7 +9,6 @@ use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::fmt::Display;
 use core::marker::PhantomData;
 
 pub use crate::reader::DecodeResult;
@@ -637,7 +636,7 @@ pub fn try_convert<C, F, G, B, E>(inner: C, to: F, from: G) -> TryConvert<C, F, 
 where
     C: Codec<Output: Sized>,
     F: Fn(C::Output) -> Result<B, E>,
-    E: Display,
+    E: Into<BoxedError>,
     G: Fn(&B) -> C::Output,
 {
     TryConvert { inner, to, from }
@@ -647,7 +646,7 @@ impl<C, F, G, B, E> Decoder for TryConvert<C, F, G>
 where
     C: Codec<Output: Sized>,
     F: Fn(C::Output) -> Result<B, E>,
-    E: Display,
+    E: Into<BoxedError>,
     G: Fn(&B) -> C::Output,
 {
     type Output = B;
@@ -656,7 +655,7 @@ where
         let a = decode_child(&self.inner, r, cx)?;
         (self.to)(a).map_err(|e| {
             let loc = start.map(|s| r.since(&s));
-            DecodeError::at(Problem::ValidationFailed(e.to_string()), loc)
+            DecodeError::invalid(e, loc)
         })
     }
 }
@@ -664,7 +663,7 @@ impl<C, F, G, B, E> Encoder for TryConvert<C, F, G>
 where
     C: Codec<Output: Sized>,
     F: Fn(C::Output) -> Result<B, E>,
-    E: Display,
+    E: Into<BoxedError>,
     G: Fn(&B) -> C::Output,
 {
     type Input = B;
@@ -689,12 +688,12 @@ pub fn refine<C, V, E>(inner: C, validate: V) -> Refine<C, V>
 where
     C: Codec<Output: Sized>,
     V: Fn(&C::Output) -> Result<(), E>,
-    E: Display,
+    E: Into<BoxedError>,
 {
     Refine { inner, validate }
 }
 
-impl<C: Codec<Output: Sized>, V: Fn(&C::Output) -> Result<(), E>, E: Display> Decoder
+impl<C: Codec<Output: Sized>, V: Fn(&C::Output) -> Result<(), E>, E: Into<BoxedError>> Decoder
     for Refine<C, V>
 {
     type Output = C::Output;
@@ -709,15 +708,12 @@ impl<C: Codec<Output: Sized>, V: Fn(&C::Output) -> Result<(), E>, E: Display> De
             Ok(()) => Ok(a),
             Err(e) => {
                 let loc = start.map(|s| r.since(&s));
-                Err(DecodeError::at(
-                    Problem::ValidationFailed(e.to_string()),
-                    loc,
-                ))
+                Err(DecodeError::invalid(e, loc))
             }
         }
     }
 }
-impl<C: Codec<Output: Sized>, V: Fn(&C::Output) -> Result<(), E>, E: Display> Encoder
+impl<C: Codec<Output: Sized>, V: Fn(&C::Output) -> Result<(), E>, E: Into<BoxedError>> Encoder
     for Refine<C, V>
 {
     type Input = C::Output;
@@ -793,20 +789,22 @@ impl<D: Decoder, F: Fn(D::Output) -> B, B> Decoder for Map<D, F> {
 /// Decoder-only fallible map.
 #[derive(Debug, Clone, Copy)]
 pub struct TryMap<D, F>(D, F);
-pub fn try_map<D: Decoder, F: Fn(D::Output) -> Result<B, E>, B, E: Display>(
+pub fn try_map<D: Decoder, F: Fn(D::Output) -> Result<B, E>, B, E: Into<BoxedError>>(
     decoder: D,
     f: F,
 ) -> TryMap<D, F> {
     TryMap(decoder, f)
 }
-impl<D: Decoder, F: Fn(D::Output) -> Result<B, E>, B, E: Display> Decoder for TryMap<D, F> {
+impl<D: Decoder, F: Fn(D::Output) -> Result<B, E>, B, E: Into<BoxedError>> Decoder
+    for TryMap<D, F>
+{
     type Output = B;
     fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<B, R> {
         let start = r.here();
         let a = decode_child(&self.0, r, cx)?;
         (self.1)(a).map_err(|e| {
             let loc = start.map(|s| r.since(&s));
-            DecodeError::at(Problem::ValidationFailed(e.to_string()), loc)
+            DecodeError::invalid(e, loc)
         })
     }
 }
@@ -849,16 +847,24 @@ impl<T: Clone> Decoder for Always<T> {
     }
 }
 
-/// Decoder-only: always fail with `problem`.
+/// Decoder-only: always fail with `error`, as a custom error (see
+/// [`Problem::Custom`]): a message (`fail("not supported yet")`) or a
+/// value of your own error type.
 #[derive(Debug, Clone)]
-pub struct Fail<T>(Problem, PhantomData<fn() -> T>);
-pub fn fail<T>(problem: Problem) -> Fail<T> {
-    Fail(problem, PhantomData)
+pub struct Fail<T, E>(E, PhantomData<fn() -> T>);
+pub fn fail<T, E>(error: E) -> Fail<T, E>
+where
+    E: Into<BoxedError> + Clone,
+{
+    Fail(error, PhantomData)
 }
-impl<T> Decoder for Fail<T> {
+impl<T, E> Decoder for Fail<T, E>
+where
+    E: Into<BoxedError> + Clone,
+{
     type Output = T;
     fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<T, R> {
-        Err(DecodeError::at(self.0.clone(), r.here()))
+        Err(DecodeError::invalid(self.0.clone(), r.here()))
     }
 }
 
@@ -917,7 +923,7 @@ impl<T: Clone + PartialEq, const N: usize> Encoder for StringEnum<T, N> {
 /// A number codec whose values can also be written as text (see
 /// [`stringified`]).
 pub trait NumberText: Codec<Output: Sized> {
-    fn parse_text(&self, text: &str) -> Result<Self::Output, Problem>;
+    fn parse_text<F>(&self, text: &str) -> Result<Self::Output, Problem<F>>;
     fn format_text(&self, v: &Self::Output) -> String;
 }
 
@@ -962,14 +968,14 @@ pub fn number_grammar(text: &str) -> Option<bool> {
     (i == b.len()).then_some(float)
 }
 
-fn not_a_number(text: &str, expected: &'static str) -> Problem {
+fn not_a_number<F>(text: &str, expected: &'static str) -> Problem<F> {
     Problem::mismatch(expected, alloc::format!("{text:?}"))
 }
 
 macro_rules! integer_text {
     ($($codec:ty, $t:ty;)*) => {$(
         impl NumberText for $codec {
-            fn parse_text(&self, text: &str) -> Result<$t, Problem> {
+            fn parse_text<F>(&self, text: &str) -> Result<$t, Problem<F>> {
                 if number_grammar(text) != Some(false) {
                     return Err(not_a_number(text, "integer text"));
                 }
@@ -999,7 +1005,7 @@ integer_text! {
 }
 
 /// Float text: JSON's number grammar, or `NaN`, `Infinity`, `-Infinity`.
-fn parse_float_text(text: &str) -> Result<f64, Problem> {
+fn parse_float_text<F>(text: &str) -> Result<f64, Problem<F>> {
     match text {
         "NaN" => return Ok(f64::NAN),
         "Infinity" => return Ok(f64::INFINITY),
@@ -1032,7 +1038,7 @@ fn format_float_text(v: f64) -> String {
 }
 
 impl NumberText for F64Codec {
-    fn parse_text(&self, text: &str) -> Result<f64, Problem> {
+    fn parse_text<F>(&self, text: &str) -> Result<f64, Problem<F>> {
         parse_float_text(text)
     }
     fn format_text(&self, v: &f64) -> String {
@@ -1041,7 +1047,7 @@ impl NumberText for F64Codec {
 }
 
 impl NumberText for F32Codec {
-    fn parse_text(&self, text: &str) -> Result<f32, Problem> {
+    fn parse_text<F>(&self, text: &str) -> Result<f32, Problem<F>> {
         let v = parse_float_text(text)?;
         let f = v as f32;
         if v.is_finite() && !f.is_finite() {
@@ -1061,7 +1067,7 @@ impl NumberText for F32Codec {
 }
 
 impl NumberText for F16Codec {
-    fn parse_text(&self, text: &str) -> Result<f32, Problem> {
+    fn parse_text<F>(&self, text: &str) -> Result<f32, Problem<F>> {
         let v = parse_float_text(text)?;
         let half = crate::half::f16_to_f64(crate::half::f64_to_f16(v));
         if v.is_finite() && !half.is_finite() {

@@ -21,11 +21,13 @@
 extern crate alloc;
 
 mod bignum;
+pub mod malformed;
 pub mod reader;
 pub mod serializer;
 pub mod stream;
 pub mod value;
 
+pub use malformed::Malformed;
 pub use reader::{CborCheckpoint, CborReader};
 pub use serializer::{CborSerializer, EncodeOptions, Floats};
 pub use stream::StreamDecoder;
@@ -40,11 +42,13 @@ use girders::{
     Span,
 };
 
-pub type Error = DecodeError<Span>;
+/// A decode error from CBOR input.
+pub type Error = DecodeError<Span, Malformed>;
 
 /// The reader as a trait object. Decoding goes through this so the
 /// reader's code exists once, shared by every codec.
-pub(crate) type DynReader<'a> = dyn Reader<Location = Span, Checkpoint = CborCheckpoint> + 'a;
+pub(crate) type DynReader<'a> =
+    dyn Reader<Location = Span, Error = Malformed, Checkpoint = CborCheckpoint> + 'a;
 
 /// Decode one complete data item; trailing bytes are an error.
 pub fn decode<C: Decoder + ?Sized>(input: &[u8], codec: &C) -> Result<C::Output, Error> {
@@ -74,7 +78,7 @@ pub fn decode_source<S: Source, C: Decoder + ?Sized>(
     let v = codec.decode::<DynReader<'_>>(&mut r, &mut cx)?;
     if !r.at_end()? {
         return Err(DecodeError::at(
-            Problem::Syntax("trailing bytes after the data item".into()),
+            Problem::Format(Malformed::TrailingBytes),
             Some(Span::point(r.offset())),
         ));
     }

@@ -39,7 +39,7 @@ fn locate(source: &str, target: usize) -> (usize, usize, &str) {
 }
 
 /// `<pointer>: <problem>`
-pub fn headline(detail: &ErrorDetail<Span>) -> String {
+pub fn headline<F: core::fmt::Display>(detail: &ErrorDetail<Span, F>) -> String {
     let mut out = String::new();
     if detail.path_len() > 0 {
         let _ = write!(out, "{}: ", Pointer::from_path(detail.path()));
@@ -58,7 +58,12 @@ fn snippet(out: &mut String, line: usize, col: usize, text: &str) {
     out.push('^');
 }
 
-fn render_detail(out: &mut String, d: &ErrorDetail<Span>, source: &str, with_context: bool) {
+fn render_detail<F: core::fmt::Display>(
+    out: &mut String,
+    d: &ErrorDetail<Span, F>,
+    source: &str,
+    with_context: bool,
+) {
     out.push_str(&headline(d));
     if let Some(span) = &d.location {
         let (line, col, text) = locate(source, span.start() as usize);
@@ -86,7 +91,7 @@ fn render_detail(out: &mut String, d: &ErrorDetail<Span>, source: &str, with_con
 ///  5 |     "port": "eighty"
 ///    |             ^
 /// ```
-pub fn render(err: &DecodeError<Span>, source: &str) -> String {
+pub fn render<F: core::fmt::Display>(err: &DecodeError<Span, F>, source: &str) -> String {
     let mut out = String::new();
     for (i, d) in err.iter().enumerate() {
         if i > 0 {
@@ -98,7 +103,7 @@ pub fn render(err: &DecodeError<Span>, source: &str) -> String {
 }
 
 /// `render` plus any context frames.
-pub fn render_detailed(err: &DecodeError<Span>, source: &str) -> String {
+pub fn render_detailed<F: core::fmt::Display>(err: &DecodeError<Span, F>, source: &str) -> String {
     let mut out = String::new();
     for (i, d) in err.iter().enumerate() {
         if i > 0 {
@@ -111,7 +116,7 @@ pub fn render_detailed(err: &DecodeError<Span>, source: &str) -> String {
 
 /// One line per error: `/server/port: expected int, found string (at
 /// line 3, column 13) [while decoding the server entry]`.
-pub fn render_short(err: &DecodeError<Span>, source: &str) -> String {
+pub fn render_short<F: core::fmt::Display>(err: &DecodeError<Span, F>, source: &str) -> String {
     let mut out = String::new();
     for (i, d) in err.iter().enumerate() {
         if i > 0 {

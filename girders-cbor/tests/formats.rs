@@ -232,7 +232,7 @@ fn truncated_records_are_syntax_errors() {
     for cut in [1, bytes.len() / 2, bytes.len() - 1] {
         let err = decode(&bytes[..cut], &reading()).unwrap_err();
         assert!(
-            matches!(err.problem(), Problem::Syntax(_)),
+            matches!(err.problem(), Problem::Format(_)),
             "cut at {cut}: {err}"
         );
     }

@@ -12,11 +12,11 @@ use alloc::vec::Vec;
 
 /// Add a path segment to an error if path tracking is on.
 #[inline]
-pub(crate) fn at_seg<L>(
-    e: DecodeError<L>,
+pub(crate) fn at_seg<L, E>(
+    e: DecodeError<L, E>,
     cx: &DecodeContext,
     seg: impl FnOnce() -> PathSegment,
-) -> DecodeError<L> {
+) -> DecodeError<L, E> {
     if cx.options.track_path {
         e.push_path(seg())
     } else {
@@ -31,7 +31,7 @@ pub(crate) fn at_seg<L>(
 pub(crate) fn child<R: Reader + ?Sized, T>(
     r: &mut R,
     cx: &mut DecodeContext,
-    errs: &mut Collector<R::Location>,
+    errs: &mut Collector<R::Location, R::Error>,
     seg: impl FnOnce() -> PathSegment,
     decode: impl FnOnce(&mut R, &mut DecodeContext) -> DecodeResult<T, R>,
 ) -> DecodeResult<Option<T>, R> {
@@ -63,9 +63,9 @@ pub(crate) fn child<R: Reader + ?Sized, T>(
 #[inline(never)]
 fn recover<R: Reader + ?Sized>(
     r: &mut R,
-    errs: &mut Collector<R::Location>,
+    errs: &mut Collector<R::Location, R::Error>,
     cp: R::Checkpoint,
-    e: DecodeError<R::Location>,
+    e: DecodeError<R::Location, R::Error>,
 ) -> DecodeResult<(), R> {
     if e.is_fatal() {
         r.release(cp);
@@ -253,7 +253,7 @@ impl<KC: Codec<Output: Sized>, VC> MapCodec<KC, VC> {
         &self,
         r: &mut R,
         cx: &mut DecodeContext,
-        errs: &mut Collector<R::Location>,
+        errs: &mut Collector<R::Location, R::Error>,
     ) -> DecodeResult<Option<KC::Output>, R> {
         if !cx.options.accumulate {
             return decode_child(&self.key, r, cx).map(Some);

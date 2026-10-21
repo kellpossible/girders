@@ -2,7 +2,8 @@
 //! value its diagnostic notation describes and re-encodes to the same
 //! bytes, and every Appendix F example of malformed CBOR is rejected.
 
-use girders_cbor::{Value, decode, encode, value};
+use girders::Problem;
+use girders_cbor::{Malformed, Value, decode, encode, value};
 
 fn hex(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -54,6 +55,25 @@ fn appendix_a_examples() {
     );
 }
 
+/// The error each group of Appendix F examples is reported as.
+fn expected_malformed(group: &str) -> Malformed {
+    let groups = [
+        ("Too little data", Malformed::UnexpectedEnd),
+        ("Syntax error 1", Malformed::ReservedAdditionalInformation),
+        ("Syntax error 2", Malformed::TwoByteSimpleValueBelow32),
+        ("Syntax error 3", Malformed::InvalidStringChunk),
+        ("Syntax error 4", Malformed::UnexpectedBreak),
+        ("Syntax error 5", Malformed::IndefiniteLengthNotAllowed),
+    ];
+    match groups
+        .into_iter()
+        .find(|(prefix, _)| group.starts_with(prefix))
+    {
+        Some((_, malformed)) => malformed,
+        None => panic!("unknown Appendix F group {group:?}"),
+    }
+}
+
 #[test]
 fn appendix_f_examples_are_rejected() {
     let mut group = "";
@@ -63,12 +83,11 @@ fn appendix_f_examples_are_rejected() {
             group = title;
             continue;
         }
-        let result = decode(&hex(line), &value());
-        assert!(
-            result.is_err(),
-            "{group}: {line} decoded as {}",
-            result.unwrap()
-        );
+        let expected = expected_malformed(group);
+        match decode(&hex(line), &value()) {
+            Ok(v) => panic!("{group}: {line} decoded as {v}"),
+            Err(e) => assert_eq!(e.problem(), &Problem::Format(expected), "{group}: {line}"),
+        }
         count += 1;
     }
     assert_eq!(count, 94);
@@ -77,7 +96,7 @@ fn appendix_f_examples_are_rejected() {
 #[test]
 fn too_much_data_is_rejected() {
     let err = decode(&hex("0000"), &value()).unwrap_err();
-    assert!(err.to_string().contains("trailing"), "{err}");
+    assert_eq!(err.problem(), &Problem::Format(Malformed::TrailingBytes));
 }
 
 /// A parser for the diagnostic notation used in Appendix A.

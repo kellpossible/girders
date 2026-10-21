@@ -134,7 +134,7 @@ fn read_errors_are_reported_as_io() {
 fn truncated_streams_are_syntax_errors() {
     let bytes = encode(&many_points(), &list(point()));
     let err = from_reader(&bytes[..bytes.len() - 1], &list(point())).unwrap_err();
-    assert!(matches!(err.problem(), Problem::Syntax(_)), "{err}");
+    assert!(matches!(err.problem(), Problem::Format(_)), "{err}");
 }
 
 /// Items pushed in chunks of `size`, collected as they complete.
@@ -171,7 +171,7 @@ fn a_sequence_waits_for_more_input_and_reports_a_truncated_end() {
     assert!(stream.next().is_none(), "waits for the rest");
     stream.finish();
     let err = stream.next().expect("an error").unwrap_err();
-    assert!(matches!(err.problem(), Problem::Syntax(_)), "{err}");
+    assert!(matches!(err.problem(), Problem::Format(_)), "{err}");
 }
 
 #[test]

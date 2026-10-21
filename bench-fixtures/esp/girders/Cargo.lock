@@ -12,11 +12,11 @@ dependencies = [
 
 [[package]]
 name = "girders"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "girders-json"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "girders",
  "siphasher",

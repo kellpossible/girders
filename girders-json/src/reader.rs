@@ -8,6 +8,7 @@
 //! `Problem::Incomplete` (see `stream`). For complete inputs that never
 //! happens.
 
+use crate::malformed::Malformed;
 use crate::source::Source;
 use alloc::borrow::Cow;
 use alloc::string::String;
@@ -16,7 +17,7 @@ use girders::codec::NumberText;
 use girders::reader::DecodeResult;
 use girders::{DecodeError, Kind, Number, Problem, Reader, Span};
 
-type JsonError = DecodeError<Span>;
+type JsonError = DecodeError<Span, Malformed>;
 type JsonResult<T> = Result<T, JsonError>;
 
 /// Compact once this many consumed bytes are buffered and nothing pins
@@ -136,8 +137,8 @@ impl<S: Source> JsonReader<S> {
         }
     }
 
-    fn syntax(&self, at: u64, message: impl Into<String>) -> JsonError {
-        DecodeError::at(Problem::Syntax(message.into()), self.loc(at))
+    fn syntax(&self, at: u64, error: Malformed) -> JsonError {
+        DecodeError::at(Problem::Format(error), self.loc(at))
     }
 
     #[inline]
@@ -162,7 +163,7 @@ impl<S: Source> JsonReader<S> {
 
     fn found(&mut self) -> Cow<'static, str> {
         match self.peek() {
-            Ok(None) | Err(_) => Kind::Eof.name().into(),
+            Ok(None) | Err(_) => "end of input".into(),
             Ok(Some(b)) => match classify(b) {
                 Some(k) => k.name().into(),
                 None => describe_byte(b).into(),
@@ -174,11 +175,12 @@ impl<S: Source> JsonReader<S> {
         if let Err(e) = self.skip_ws() {
             return e;
         }
-        if let Err(e) = self.peek() {
-            return e;
-        }
         let at = self.offset();
-        DecodeError::at(Problem::mismatch(expected, self.found()), self.loc(at))
+        match self.peek() {
+            Err(e) => e,
+            Ok(None) => self.syntax(at, Malformed::UnexpectedEnd),
+            Ok(Some(_)) => DecodeError::at(Problem::mismatch(expected, self.found()), self.loc(at)),
+        }
     }
 
     #[inline]
@@ -225,7 +227,7 @@ impl<S: Source> JsonReader<S> {
                         self.pos = i + 1;
                         return Ok(());
                     }
-                    Err(_) => return Err(self.syntax(start, "invalid UTF-8 in string")),
+                    Err(_) => return Err(self.syntax(start, Malformed::InvalidUtf8)),
                 }
             }
         }
@@ -233,14 +235,14 @@ impl<S: Source> JsonReader<S> {
         self.scratch.clear();
         loop {
             let b = match self.peek()? {
-                None => return Err(self.syntax(self.offset(), "unterminated string")),
+                None => return Err(self.syntax(self.offset(), Malformed::UnterminatedString)),
                 Some(b) => b,
             };
             match b {
                 b'"' => {
                     self.pos += 1;
                     let text = core::str::from_utf8(&self.scratch)
-                        .map_err(|_| self.syntax(start, "invalid UTF-8 in string"))?;
+                        .map_err(|_| self.syntax(start, Malformed::InvalidUtf8))?;
                     if let Some(out) = out.as_deref_mut() {
                         out.push_str(text);
                     }
@@ -252,7 +254,7 @@ impl<S: Source> JsonReader<S> {
                     self.read_escape(at)?;
                 }
                 b if b < 0x20 => {
-                    return Err(self.syntax(self.offset(), "unescaped control character in string"));
+                    return Err(self.syntax(self.offset(), Malformed::ControlCharacterInString));
                 }
                 _ => {
                     let buf = self.src.buf();
@@ -272,7 +274,7 @@ impl<S: Source> JsonReader<S> {
         }
     }
 
-    fn next_byte(&mut self, at_end: &'static str) -> JsonResult<u8> {
+    fn next_byte(&mut self, at_end: Malformed) -> JsonResult<u8> {
         match self.peek()? {
             Some(b) => {
                 self.pos += 1;
@@ -283,7 +285,7 @@ impl<S: Source> JsonReader<S> {
     }
 
     fn read_escape(&mut self, at: u64) -> JsonResult<()> {
-        let b = self.next_byte("unterminated escape")?;
+        let b = self.next_byte(Malformed::UnterminatedEscape)?;
         let c = match b {
             b'"' => b'"',
             b'\\' => b'\\',
@@ -295,10 +297,7 @@ impl<S: Source> JsonReader<S> {
             b't' => b'\t',
             b'u' => return self.read_unicode_escape(at),
             other => {
-                return Err(self.syntax(
-                    at,
-                    alloc::format!("invalid escape `\\{}`", describe_raw(other)),
-                ));
+                return Err(self.syntax(at, Malformed::InvalidEscape(other)));
             }
         };
         self.scratch.push(c);
@@ -308,16 +307,13 @@ impl<S: Source> JsonReader<S> {
     fn read_hex4(&mut self, at: u64) -> JsonResult<u32> {
         let mut n = 0u32;
         for _ in 0..4 {
-            let b = self.next_byte("incomplete unicode escape")?;
+            let b = self.next_byte(Malformed::IncompleteUnicodeEscape)?;
             let d = match b {
                 b'0'..=b'9' => b - b'0',
                 b'a'..=b'f' => b - b'a' + 10,
                 b'A'..=b'F' => b - b'A' + 10,
                 _ => {
-                    return Err(self.syntax(
-                        at,
-                        alloc::format!("invalid hex digit `{}`", describe_raw(b)),
-                    ));
+                    return Err(self.syntax(at, Malformed::InvalidHexDigit(b)));
                 }
             };
             n = n * 16 + d as u32;
@@ -328,8 +324,7 @@ impl<S: Source> JsonReader<S> {
     fn read_unicode_escape(&mut self, at: u64) -> JsonResult<()> {
         let n = self.read_hex4(at)?;
         let cp = if (0xD800..0xDC00).contains(&n) {
-            let lone =
-                |me: &Self| me.syntax(at, alloc::format!("lone high surrogate `\\u{n:04X}`"));
+            let lone = |me: &Self| me.syntax(at, Malformed::LoneHighSurrogate(n as u16));
             if self.peek()? != Some(b'\\') {
                 return Err(lone(self));
             }
@@ -340,18 +335,16 @@ impl<S: Source> JsonReader<S> {
             self.pos += 1;
             let low = self.read_hex4(at)?;
             if !(0xDC00..0xE000).contains(&low) {
-                return Err(self.syntax(
-                    at,
-                    alloc::format!("expected low surrogate after `\\u{n:04X}`"),
-                ));
+                return Err(self.syntax(at, Malformed::ExpectedLowSurrogate(n as u16)));
             }
             0x10000 + ((n - 0xD800) << 10) + (low - 0xDC00)
         } else if (0xDC00..0xE000).contains(&n) {
-            return Err(self.syntax(at, alloc::format!("lone low surrogate `\\u{n:04X}`")));
+            return Err(self.syntax(at, Malformed::LoneLowSurrogate(n as u16)));
         } else {
             n
         };
-        let ch = char::from_u32(cp).ok_or_else(|| self.syntax(at, "invalid unicode escape"))?;
+        let ch =
+            char::from_u32(cp).ok_or_else(|| self.syntax(at, Malformed::InvalidUnicodeEscape))?;
         let mut tmp = [0u8; 4];
         self.scratch
             .extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
@@ -382,14 +375,14 @@ impl<S: Source> JsonReader<S> {
                 self.pos += 1;
                 self.digits()?;
             }
-            _ => return Err(self.syntax(self.offset(), "expected digit")),
+            _ => return Err(self.syntax(self.offset(), Malformed::ExpectedDigit)),
         }
         let mut is_float = false;
         if self.peek()? == Some(b'.') {
             self.pos += 1;
             is_float = true;
             if self.digits()? == 0 {
-                return Err(self.syntax(self.offset(), "expected digit after decimal point"));
+                return Err(self.syntax(self.offset(), Malformed::ExpectedFractionDigit));
             }
         }
         if let Some(b'e' | b'E') = self.peek()? {
@@ -399,7 +392,7 @@ impl<S: Source> JsonReader<S> {
                 self.pos += 1;
             }
             if self.digits()? == 0 {
-                return Err(self.syntax(self.offset(), "expected digit in exponent"));
+                return Err(self.syntax(self.offset(), Malformed::ExpectedExponentDigit));
             }
         }
         Ok(NumberToken {
@@ -480,7 +473,7 @@ impl<S: Source> JsonReader<S> {
         for &w in word {
             match self.peek()? {
                 Some(b) if b == w => self.pos += 1,
-                _ => return Err(self.syntax(at, "invalid literal")),
+                _ => return Err(self.syntax(at, Malformed::InvalidLiteral)),
             }
         }
         Ok(())
@@ -497,7 +490,8 @@ impl<S: Source> JsonReader<S> {
                     self.last_key = Some(Span::new(start, self.offset()));
                 }
             }
-            _ => return Err(self.syntax(self.offset(), "expected string key")),
+            None => return Err(self.syntax(self.offset(), Malformed::UnexpectedEnd)),
+            _ => return Err(self.syntax(self.offset(), Malformed::ExpectedKey)),
         }
         self.skip_ws()?;
         match self.peek()? {
@@ -505,7 +499,7 @@ impl<S: Source> JsonReader<S> {
                 self.pos += 1;
                 Ok(())
             }
-            _ => Err(self.syntax(self.offset(), "expected `:`")),
+            _ => Err(self.syntax(self.offset(), Malformed::ExpectedColon)),
         }
     }
 
@@ -517,7 +511,8 @@ impl<S: Source> JsonReader<S> {
                 self.pos += 1;
                 self.string_body(None, start)?;
             }
-            _ => return Err(self.syntax(self.offset(), "expected string key")),
+            None => return Err(self.syntax(self.offset(), Malformed::UnexpectedEnd)),
+            _ => return Err(self.syntax(self.offset(), Malformed::ExpectedKey)),
         }
         self.skip_ws()?;
         match self.peek()? {
@@ -525,7 +520,7 @@ impl<S: Source> JsonReader<S> {
                 self.pos += 1;
                 Ok(())
             }
-            _ => Err(self.syntax(self.offset(), "expected `:`")),
+            _ => Err(self.syntax(self.offset(), Malformed::ExpectedColon)),
         }
     }
 }
@@ -555,7 +550,7 @@ fn describe_byte(b: u8) -> String {
 }
 
 /// A key's text as a dynamic number.
-fn key_as_number(text: &str) -> Result<Number, Problem> {
+fn key_as_number(text: &str) -> Result<Number, Problem<Malformed>> {
     match girders::codec::number_grammar(text) {
         None => Err(Problem::mismatch("number", alloc::format!("{text:?}"))),
         Some(true) => girders::codec::f64().parse_text(text).map(Number::F64),
@@ -593,7 +588,7 @@ impl<S: Source> JsonReader<S> {
     #[cold]
     fn key_number<T>(
         &mut self,
-        parse: impl FnOnce(&str) -> Result<T, Problem>,
+        parse: impl FnOnce(&str) -> Result<T, Problem<Malformed>>,
     ) -> DecodeResult<T, Self> {
         let key = self.pending_key.take().expect("a pending key");
         parse(&key.text).map_err(|p| DecodeError::at(p, Some(key.span)))
@@ -617,6 +612,7 @@ impl<S: Source> JsonReader<S> {
 
 impl<S: Source> Reader for JsonReader<S> {
     type Location = Span;
+    type Error = Malformed;
     type Checkpoint = JsonCheckpoint;
 
     fn peek_kind(&mut self) -> DecodeResult<Kind, Self> {
@@ -625,13 +621,9 @@ impl<S: Source> Reader for JsonReader<S> {
         }
         self.skip_ws()?;
         match self.peek()? {
-            None => Ok(Kind::Eof),
-            Some(b) => classify(b).ok_or_else(|| {
-                self.syntax(
-                    self.offset(),
-                    alloc::format!("unexpected character {}", describe_byte(b)),
-                )
-            }),
+            None => Err(self.syntax(self.offset(), Malformed::UnexpectedEnd)),
+            Some(b) => classify(b)
+                .ok_or_else(|| self.syntax(self.offset(), Malformed::UnexpectedCharacter(b))),
         }
     }
 
@@ -793,13 +785,13 @@ impl<S: Source> Reader for JsonReader<S> {
         self.skip_ws()?;
         match self.peek()? {
             Some(b']') => Ok(false),
-            None => Err(self.syntax(self.offset(), "unterminated array")),
+            None => Err(self.syntax(self.offset(), Malformed::UnterminatedArray)),
             Some(_) if first => Ok(true),
             Some(b',') => {
                 self.pos += 1;
                 Ok(true)
             }
-            Some(_) => Err(self.syntax(self.offset(), "expected `,` or `]`")),
+            Some(_) => Err(self.syntax(self.offset(), Malformed::ExpectedCommaOrBracket)),
         }
     }
 
@@ -821,13 +813,13 @@ impl<S: Source> Reader for JsonReader<S> {
         self.skip_ws()?;
         match self.peek()? {
             Some(b'}') => Ok(false),
-            None => Err(self.syntax(self.offset(), "unterminated object")),
+            None => Err(self.syntax(self.offset(), Malformed::UnterminatedObject)),
             Some(_) if first => self.key_after_separator(buf).map(|()| true),
             Some(b',') => {
                 self.pos += 1;
                 self.key_after_separator(buf).map(|()| true)
             }
-            Some(_) => Err(self.syntax(self.offset(), "expected `,` or `}`")),
+            Some(_) => Err(self.syntax(self.offset(), Malformed::ExpectedCommaOrBrace)),
         }
     }
 
@@ -890,12 +882,9 @@ impl<S: Source> Reader for JsonReader<S> {
                 Some(b'f') => self.keyword(b"false", "value")?,
                 Some(b'n') => self.keyword(b"null", "value")?,
                 Some(b) => {
-                    return Err(self.syntax(
-                        self.offset(),
-                        alloc::format!("unexpected character {}", describe_byte(b)),
-                    ));
+                    return Err(self.syntax(self.offset(), Malformed::UnexpectedCharacter(b)));
                 }
-                None => return Err(self.syntax(self.offset(), "unexpected end of input")),
+                None => return Err(self.syntax(self.offset(), Malformed::UnexpectedEnd)),
             }
             // After a complete value: close containers or move to the next
             // element.
@@ -916,10 +905,18 @@ impl<S: Source> Reader for JsonReader<S> {
                         self.pos += 1;
                         stack.pop();
                     }
-                    (false, None) => return Err(self.syntax(self.offset(), "unterminated array")),
-                    (true, None) => return Err(self.syntax(self.offset(), "unterminated object")),
-                    (false, _) => return Err(self.syntax(self.offset(), "expected `,` or `]`")),
-                    (true, _) => return Err(self.syntax(self.offset(), "expected `,` or `}`")),
+                    (false, None) => {
+                        return Err(self.syntax(self.offset(), Malformed::UnterminatedArray));
+                    }
+                    (true, None) => {
+                        return Err(self.syntax(self.offset(), Malformed::UnterminatedObject));
+                    }
+                    (false, _) => {
+                        return Err(self.syntax(self.offset(), Malformed::ExpectedCommaOrBracket));
+                    }
+                    (true, _) => {
+                        return Err(self.syntax(self.offset(), Malformed::ExpectedCommaOrBrace));
+                    }
                 }
             }
         }
