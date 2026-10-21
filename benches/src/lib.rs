@@ -8,6 +8,7 @@
 
 pub mod canada;
 pub mod citm;
+pub mod events;
 pub mod twitter;
 
 use std::path::PathBuf;

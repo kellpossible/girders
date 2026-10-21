@@ -358,8 +358,8 @@ fn thing() -> impl Codec<Output = Thing> {
             ),
         ),
         |t| match t {
-            Thing::Bag(items) => Pick2::Variant0(items.into()),
-            Thing::Note(t) => Pick2::Variant1(t.into()),
+            Thing::Bag(items) => Pick2::Variant0(items),
+            Thing::Note(t) => Pick2::Variant1(t),
         },
     )
 }
@@ -385,8 +385,8 @@ fn thing_adjacent() -> impl Codec<Output = Thing> {
             variant("note", string(), Thing::Note),
         ),
         |t| match t {
-            Thing::Bag(items) => Pick2::Variant0(items.into()),
-            Thing::Note(t) => Pick2::Variant1(t.into()),
+            Thing::Bag(items) => Pick2::Variant0(items),
+            Thing::Note(t) => Pick2::Variant1(t),
         },
     )
 }

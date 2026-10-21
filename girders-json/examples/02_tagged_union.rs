@@ -2,15 +2,23 @@
 //!
 //! `{"type":"circle","radius":2.0}`: the tag sits next to the variant's
 //! fields. Variants are listed for decoding; encoding is an exhaustive
-//! `match` returning a positional `Of3::Vn(payload)`, so rustc checks both that
-//! every variant is handled and that each payload has the right type.
+//! `match` returning a positional `Pick3::VariantN(&payload)`, so rustc
+//! checks both that every variant is handled and that each payload has the
+//! right type. Payloads are borrowed, so a variant with several fields
+//! holds them in a struct of its own.
 
 use girders::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Rectangle {
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
     Circle { radius: f64 },
-    Rectangle { width: f64, height: f64 },
+    Rectangle(Rectangle),
     Point,
 }
 
@@ -24,23 +32,20 @@ pub fn shape_codec() -> impl Codec<Output = Shape> {
             variant(
                 "rectangle",
                 record((
-                    field("width", f64(), |r: &(f64, f64)| &r.0),
-                    field("height", f64(), |r: &(f64, f64)| &r.1),
+                    field("width", f64(), |r: &Rectangle| &r.width),
+                    field("height", f64(), |r: &Rectangle| &r.height),
                 ))
-                .build(|(w, h)| (w, h)),
-                |(width, height)| Shape::Rectangle { width, height },
+                .build(|(width, height)| Rectangle { width, height }),
+                Shape::Rectangle,
             ),
             // A fieldless variant: only the tag.
             variant("point", empty_object(), |()| Shape::Point),
         ),
         |s| match s {
-            Shape::Circle { radius } => Pick3::Variant0(radius.into()),
-            // Struct-like variants have no single value to borrow, so the
-            // payload is built on the spot.
-            Shape::Rectangle { width, height } => {
-                Pick3::Variant1(Payload::Owned((*width, *height)))
-            }
-            Shape::Point => Pick3::Variant2(Payload::Owned(())),
+            // A variant with one field can borrow it directly.
+            Shape::Circle { radius } => Pick3::Variant0(radius),
+            Shape::Rectangle(rectangle) => Pick3::Variant1(rectangle),
+            Shape::Point => Pick3::Variant2(&()),
         },
     )
 }
@@ -64,19 +69,19 @@ pub fn main() {
         r#"{"type":"circle","radius":2.0}"#
     );
     assert_eq!(
-        to_json(&Shape::Rectangle {
+        to_json(&Shape::Rectangle(Rectangle {
             width: 3.0,
             height: 4.0
-        }),
+        })),
         r#"{"type":"rectangle","width":3.0,"height":4.0}"#
     );
     assert_eq!(to_json(&Shape::Point), r#"{"type":"point"}"#);
     for s in [
         Shape::Circle { radius: 2.0 },
-        Shape::Rectangle {
+        Shape::Rectangle(Rectangle {
             width: 3.0,
             height: 4.0,
-        },
+        }),
         Shape::Point,
     ] {
         assert_eq!(from_json(&to_json(&s)).unwrap(), s);

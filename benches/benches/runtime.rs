@@ -5,7 +5,8 @@
 //! Run: `mise run bench` (needs valgrind and gungraun-runner 0.20.0).
 
 use girders::DecodeOptions;
-use girders_benches::{canada, citm, data, twitter};
+use girders::collections::list;
+use girders_benches::{canada, citm, data, events, twitter};
 use girders_json::{StreamDecoder, Value, value};
 use gungraun::{Dhat, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
@@ -527,6 +528,30 @@ library_benchmark_group!(
     ]
 );
 
+// -- unions: 10,000 mixed events ---------------------------------------------------
+
+fn events_value(_: ()) -> Vec<events::Event> {
+    events::sample()
+}
+
+fn events_json(_: ()) -> String {
+    girders_json::encode(&events::sample(), &list(events::event()))
+}
+
+#[library_benchmark]
+#[bench::events(setup = events_value, args = [()])]
+fn encode_events(v: Vec<events::Event>) -> String {
+    black_box(girders_json::encode(black_box(&v), &list(events::event())))
+}
+
+#[library_benchmark]
+#[bench::events(setup = events_json, args = [()])]
+fn decode_events(json: String) -> Vec<events::Event> {
+    black_box(girders_json::decode(black_box(&json), &list(events::event())).unwrap())
+}
+
+library_benchmark_group!(name = unions, benchmarks = [encode_events, decode_events]);
+
 main!(
     config = LibraryBenchmarkConfig::default().tool(Dhat::default()),
     library_benchmark_groups = [
@@ -537,6 +562,7 @@ main!(
         streaming,
         dyn_dispatch,
         value_ops,
-        cbor
+        cbor,
+        unions
     ]
 );

@@ -1,8 +1,10 @@
 //! Sum types: internally and adjacently tagged unions, and `one_of`.
 //!
 //! Variants are listed for decoding; encoding projects the value with an
-//! exhaustive `match` returning a positional `OfN::Vk(payload)`, so rustc
-//! checks both exhaustiveness and each payload's type.
+//! exhaustive `match` returning a positional `PickN::VariantK(&payload)`,
+//! so rustc checks both exhaustiveness and each payload's type. Payloads
+//! are borrowed from the value: a variant with several named fields needs
+//! them in a struct of its own (`Rectangle(Rectangle)`).
 
 use crate::codec::{Codec, DecodeResult, Decoder, Encoder, decode_child};
 use crate::context::{DecodeContext, EncodeContext, TagValue};
@@ -46,31 +48,6 @@ pub(crate) fn scan_tag<R: Reader + ?Sized, T>(
     r.rewind(&cp);
     r.release(cp);
     result
-}
-
-/// A variant's payload as handed to the encoder by the projection:
-/// borrowed from the value (`c.into()`), or built on the spot for
-/// struct-like variants (`Payload::Owned((*w, *h))`).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Payload<'a, T> {
-    Ref(&'a T),
-    Owned(T),
-}
-
-impl<'a, T> From<&'a T> for Payload<'a, T> {
-    fn from(r: &'a T) -> Self {
-        Payload::Ref(r)
-    }
-}
-
-impl<T> core::ops::Deref for Payload<'_, T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        match self {
-            Payload::Ref(r) => r,
-            Payload::Owned(t) => t,
-        }
-    }
 }
 
 /// One variant: its tag, payload codec, and constructor.
@@ -160,7 +137,7 @@ macro_rules! variants {
 
         impl<T, $($C: Codec<Output: Sized>, $K: Fn($C::Output) -> T),+> Variants for ($(Variant<$C, $K>,)+) {
             type Output = T;
-            type Pick<'a> = $Enum<$(Payload<'a, $C::Output>),+> where Self: 'a;
+            type Pick<'a> = $Enum<$(&'a $C::Output),+> where Self: 'a;
 
             #[inline]
             fn decode_variant<R: Reader + ?Sized>(&self, tag: &str, r: &mut R, cx: &mut DecodeContext) -> Option<DecodeResult<T, R>> {
@@ -181,7 +158,7 @@ macro_rules! variants {
                 cx: &mut EncodeContext,
             ) -> Result<(), S::Error> {
                 match pick {
-                    $($Enum::$V(v) => encode_variant(self.$i.tag, &self.$i.codec, &*v, style, s, cx),)+
+                    $($Enum::$V(v) => encode_variant(self.$i.tag, &self.$i.codec, v, style, s, cx),)+
                 }
             }
         }

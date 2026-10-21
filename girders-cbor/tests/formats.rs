@@ -190,8 +190,8 @@ fn event() -> impl Codec<Output = Event> {
             ),
         ),
         |e| match e {
-            Event::Reading(r) => Pick2::Variant0(r.into()),
-            Event::Reset(s) => Pick2::Variant1(s.into()),
+            Event::Reading(r) => Pick2::Variant0(r),
+            Event::Reset(s) => Pick2::Variant1(s),
         },
     )
 }
