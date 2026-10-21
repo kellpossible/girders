@@ -503,7 +503,9 @@ fn decode_value<M: ObjectMap, R: Reader + ?Sized>(
             r.end_object()?;
             Node::Object(m)
         }
-        Kind::Eof | Kind::Bytes | Kind::Tag | Kind::Simple => return Err(girders::reader::mismatch(r, "value")),
+        Kind::Eof | Kind::Bytes | Kind::Tag | Kind::Simple => {
+            return Err(girders::reader::mismatch(r, "value"));
+        }
     };
     let span = start.and_then(|s| {
         let loc = r.since(&s);
@@ -514,7 +516,11 @@ fn decode_value<M: ObjectMap, R: Reader + ?Sized>(
 
 impl<M: ObjectMap> Decoder for ValueCodec<M> {
     type Output = Value<M>;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Value<M>, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Value<M>, R> {
         decode_value(r, cx)
     }
 }

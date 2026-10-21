@@ -56,7 +56,9 @@ impl<E: fmt::Debug> fmt::Display for EncodeError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EncodeError::NonFinite(x) => write!(f, "cannot encode non-finite number {x} as JSON"),
-            EncodeError::UnsupportedKey => f.write_str("JSON object keys must be strings or integers"),
+            EncodeError::UnsupportedKey => {
+                f.write_str("JSON object keys must be strings or integers")
+            }
             EncodeError::Write(e) => write!(f, "write failed: {e:?}"),
         }
     }

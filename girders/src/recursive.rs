@@ -42,7 +42,11 @@ pub const fn recursive<D: Recursive>(def: D) -> RecursiveCodec<D> {
 impl<D: Recursive> Decoder for RecursiveCodec<D> {
     type Output = D::Output;
     #[inline]
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<D::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<D::Output, R> {
         decode_child(&self.0.codec(), r, cx)
     }
 }

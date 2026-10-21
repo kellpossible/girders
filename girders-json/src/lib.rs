@@ -43,7 +43,8 @@ pub use value::{Node, ObjectMap, Ordered, Sorted, Value, value};
 use alloc::string::String;
 use alloc::vec::Vec;
 use girders::{
-    DecodeContext, DecodeError, DecodeOptions, Decoder, EncodeContext, Encoder, Problem, Reader, Span,
+    DecodeContext, DecodeError, DecodeOptions, Decoder, EncodeContext, Encoder, Problem, Reader,
+    Span,
 };
 
 pub type Error = DecodeError<Span>;

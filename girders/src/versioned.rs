@@ -72,7 +72,9 @@ impl FoundVersionTag {
     }
 }
 
-fn read_version<R: Reader + ?Sized>(r: &mut R) -> DecodeResult<(FoundVersionTag, Option<R::Location>), R> {
+fn read_version<R: Reader + ?Sized>(
+    r: &mut R,
+) -> DecodeResult<(FoundVersionTag, Option<R::Location>), R> {
     let at = r.here();
     match r.peek_kind()? {
         Kind::Number => Ok((FoundVersionTag::Int(r.read_i64()?), at)),
@@ -118,7 +120,9 @@ pub struct Legacy<D> {
     decoder: D,
 }
 
-impl<Output, D: Decoder<Output = Output>, Rest: LegacyList<Output>> LegacyList<Output> for (Legacy<D>, Rest) {
+impl<Output, D: Decoder<Output = Output>, Rest: LegacyList<Output>> LegacyList<Output>
+    for (Legacy<D>, Rest)
+{
     fn decode_version<R: Reader + ?Sized>(
         &self,
         v: &FoundVersion,
@@ -222,7 +226,11 @@ impl<C: Codec<Output: Sized>, L: LegacyList<C::Output>> Versioned<C, L> {
 impl<C: Codec<Output: Sized>, L: LegacyList<C::Output>> Decoder for Versioned<C, L> {
     type Output = C::Output;
 
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<C::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<C::Output, R> {
         let at = r.here();
         let (found, tag_at) = match scan_tag(r, cx, self.tag, read_version)? {
             Some(f) => f,

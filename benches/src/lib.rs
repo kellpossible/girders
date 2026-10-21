@@ -78,14 +78,16 @@ impl girders_json::ObjectMap for Linear {
     }
 }
 
-
 #[cfg(test)]
 mod cbor {
     //! The json-benchmark models through CBOR with the same codecs: JSON in,
     //! CBOR out and back, and the result equals the original.
     use crate::{canada, citm, data, twitter};
 
-    fn through_cbor<C: girders::Codec<Output: PartialEq + std::fmt::Debug>>(file: &str, codec: &C) -> (usize, usize) {
+    fn through_cbor<C: girders::Codec<Output: PartialEq + std::fmt::Debug>>(
+        file: &str,
+        codec: &C,
+    ) -> (usize, usize) {
         let json = data(file);
         let v = girders_json::decode(&json, codec).unwrap();
         let cbor = girders_cbor::encode(&v, codec);

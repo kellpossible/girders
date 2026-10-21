@@ -37,7 +37,9 @@ pub fn shape_codec() -> impl Codec<Output = Shape> {
             Shape::Circle { radius } => Pick3::Variant0(radius.into()),
             // Struct-like variants have no single value to borrow, so the
             // payload is built on the spot.
-            Shape::Rectangle { width, height } => Pick3::Variant1(Payload::Owned((*width, *height))),
+            Shape::Rectangle { width, height } => {
+                Pick3::Variant1(Payload::Owned((*width, *height)))
+            }
             Shape::Point => Pick3::Variant2(Payload::Owned(())),
         },
     )

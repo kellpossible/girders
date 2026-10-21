@@ -88,7 +88,11 @@ pub const fn list<C>(inner: C) -> List<C> {
 
 impl<C: Decoder> Decoder for List<C> {
     type Output = Vec<C::Output>;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Self::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Self::Output, R> {
         r.begin_array()?;
         cx.nested(|cx| {
             let mut out = Vec::new();
@@ -184,7 +188,11 @@ pub const fn entries<C>(inner: C) -> Entries<C> {
 
 impl<C: Decoder> Decoder for Entries<C> {
     type Output = Vec<(String, C::Output)>;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Self::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Self::Output, R> {
         let mut out = Vec::new();
         decode_entries(&self.0, r, cx, |k, v| {
             out.push((k, v));
@@ -220,7 +228,11 @@ pub const fn btree_map<C>(inner: C) -> BTreeMapCodec<C> {
 
 impl<C: Decoder> Decoder for BTreeMapCodec<C> {
     type Output = BTreeMap<String, C::Output>;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Self::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Self::Output, R> {
         let mut out = BTreeMap::new();
         decode_entries(&self.0, r, cx, |k, v| match out.entry(k) {
             alloc::collections::btree_map::Entry::Occupied(o) => {

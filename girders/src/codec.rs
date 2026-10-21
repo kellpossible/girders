@@ -18,7 +18,11 @@ pub use crate::reader::DecodeResult;
 pub trait Decoder {
     type Output;
 
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Self::Output, R>;
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Self::Output, R>;
 }
 
 /// Decode a child codec. Codec implementations call their children
@@ -55,7 +59,11 @@ impl<T> Codec for T where T: Decoder + Encoder<Input = <T as Decoder>::Output> {
 impl<D: Decoder + ?Sized> Decoder for &D {
     type Output = D::Output;
     #[inline(always)]
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<D::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<D::Output, R> {
         (**self).decode(r, cx)
     }
 }
@@ -116,7 +124,11 @@ unit_codec!(
 impl Decoder for BytesCodec {
     type Output = Vec<u8>;
     #[inline]
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<Vec<u8>, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        _cx: &mut DecodeContext,
+    ) -> DecodeResult<Vec<u8>, R> {
         let mut b = Vec::new();
         r.read_bytes(&mut b)?;
         Ok(b)
@@ -138,7 +150,11 @@ impl Encoder for BytesCodec {
 impl Decoder for Str {
     type Output = String;
     #[inline]
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<String, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        _cx: &mut DecodeContext,
+    ) -> DecodeResult<String, R> {
         let mut s = String::new();
         r.read_str(&mut s)?;
         Ok(s)
@@ -159,7 +175,11 @@ impl Encoder for Str {
 
 impl Decoder for BoolCodec {
     type Output = bool;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<bool, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        _cx: &mut DecodeContext,
+    ) -> DecodeResult<bool, R> {
         r.read_bool()
     }
 }
@@ -177,7 +197,11 @@ impl Encoder for BoolCodec {
 
 impl Decoder for NullCodec {
     type Output = ();
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<(), R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        _cx: &mut DecodeContext,
+    ) -> DecodeResult<(), R> {
         r.read_null()
     }
 }
@@ -196,7 +220,11 @@ impl Encoder for NullCodec {
 impl Decoder for F64Codec {
     type Output = f64;
     #[inline]
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<f64, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        _cx: &mut DecodeContext,
+    ) -> DecodeResult<f64, R> {
         r.read_f64()
     }
 }
@@ -215,7 +243,11 @@ impl Encoder for F64Codec {
 
 impl Decoder for F32Codec {
     type Output = f32;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<f32, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        _cx: &mut DecodeContext,
+    ) -> DecodeResult<f32, R> {
         let start = r.here();
         let v = r.read_f64()?;
         let f = v as f32;
@@ -253,7 +285,11 @@ macro_rules! int_codec {
         impl Decoder for $name {
             type Output = $t;
             #[inline]
-            fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<$t, R> {
+            fn decode<R: Reader + ?Sized>(
+                &self,
+                r: &mut R,
+                _cx: &mut DecodeContext,
+            ) -> DecodeResult<$t, R> {
                 let start = r.here();
                 let v = r.$read()?;
                 <$t>::try_from(v).map_err(|_| {
@@ -305,7 +341,11 @@ macro_rules! wide_int_codec {
         }
         impl Decoder for $name {
             type Output = $t;
-            fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<$t, R> {
+            fn decode<R: Reader + ?Sized>(
+                &self,
+                r: &mut R,
+                _cx: &mut DecodeContext,
+            ) -> DecodeResult<$t, R> {
                 let start = r.here();
                 let mut text = String::new();
                 r.read_number_text(&mut text)?;
@@ -355,13 +395,20 @@ pub const fn tagged<C: Codec>(tag: u64, inner: C) -> Tagged<C> {
 
 impl<C: Decoder> Decoder for Tagged<C> {
     type Output = C::Output;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<C::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<C::Output, R> {
         if r.supports_tags() {
             let at = r.here();
             let found = r.read_tag()?;
             if found != self.tag {
                 return Err(DecodeError::at(
-                    Problem::mismatch(alloc::format!("tag {}", self.tag), alloc::format!("tag {found}")),
+                    Problem::mismatch(
+                        alloc::format!("tag {}", self.tag),
+                        alloc::format!("tag {found}"),
+                    ),
                     at,
                 ));
             }
@@ -395,7 +442,11 @@ pub const fn optional<C>(inner: C) -> Optional<C> {
 impl<C: Decoder> Decoder for Optional<C> {
     type Output = Option<C::Output>;
     #[inline]
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Self::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Self::Output, R> {
         if r.peek_kind()? == Kind::Null {
             r.read_null()?;
             Ok(None)
@@ -429,7 +480,11 @@ pub const fn boxed<C>(inner: C) -> Boxed<C> {
 
 impl<C: Decoder> Decoder for Boxed<C> {
     type Output = Box<C::Output>;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Self::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Self::Output, R> {
         decode_child(&self.0, r, cx).map(Box::new)
     }
 }
@@ -454,7 +509,11 @@ pub const fn spanned<C>(inner: C) -> SpannedCodec<C> {
 
 impl<C: Decoder> Decoder for SpannedCodec<C> {
     type Output = Spanned<C::Output>;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Self::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Self::Output, R> {
         let start = r.here();
         let value = decode_child(&self.0, r, cx)?;
         let span = start.and_then(|s| {
@@ -594,7 +653,11 @@ impl<C: Codec<Output: Sized>, V: Fn(&C::Output) -> Result<(), E>, E: Display> De
     for Refine<C, V>
 {
     type Output = C::Output;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<C::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<C::Output, R> {
         let start = r.here();
         let a = decode_child(&self.inner, r, cx)?;
         match (self.validate)(&a) {
@@ -640,7 +703,11 @@ pub fn context<C>(description: impl Into<Cow<'static, str>>, inner: C) -> Contex
 
 impl<C: Decoder> Decoder for Context<C> {
     type Output = C::Output;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<C::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<C::Output, R> {
         let start = r.here();
         decode_child(&self.inner, r, cx).map_err(|e| {
             e.push_context(ContextFrame {
@@ -707,7 +774,11 @@ pub fn then<D: Decoder, F: Fn(D::Output) -> D2, D2: Decoder>(decoder: D, f: F) -
 }
 impl<D: Decoder, F: Fn(D::Output) -> D2, D2: Decoder> Decoder for Then<D, F> {
     type Output = D2::Output;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<D2::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<D2::Output, R> {
         let a = decode_child(&self.0, r, cx)?;
         decode_child(&(self.1)(a), r, cx)
     }
@@ -721,7 +792,11 @@ pub fn success<T: Clone>(value: T) -> Success<T> {
 }
 impl<T: Clone> Decoder for Success<T> {
     type Output = T;
-    fn decode<R: Reader + ?Sized>(&self, _r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<T, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        _r: &mut R,
+        _cx: &mut DecodeContext,
+    ) -> DecodeResult<T, R> {
         Ok(self.0.clone())
     }
 }

@@ -258,7 +258,11 @@ fn read_tag<R: Reader + ?Sized>(r: &mut R) -> DecodeResult<(String, Option<R::Lo
 
 impl<Vs: Variants, P: for<'a> Fn(&'a Vs::Output) -> Vs::Pick<'a>> Decoder for TaggedUnion<Vs, P> {
     type Output = Vs::Output;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Vs::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Vs::Output, R> {
         let at = r.here();
         let (tag, tag_at) = scan_tag(r, cx, self.tag, read_tag)?
             .ok_or_else(|| DecodeError::at(Problem::MissingField(self.tag.into()), at))?;
@@ -325,7 +329,11 @@ where
 
 impl<Vs: Variants, P: for<'a> Fn(&'a Vs::Output) -> Vs::Pick<'a>> Decoder for AdjacentUnion<Vs, P> {
     type Output = Vs::Output;
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<Vs::Output, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<Vs::Output, R> {
         let at = r.here();
         let (tag, tag_at) = scan_tag(r, cx, self.tag, read_tag)?
             .ok_or_else(|| DecodeError::at(Problem::MissingField(self.tag.into()), at.clone()))?;

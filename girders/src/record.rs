@@ -161,7 +161,12 @@ pub trait Fields {
 
 #[cold]
 #[inline(never)]
-fn missing<L: Clone>(name: &'static str, cx: &DecodeContext, errs: &mut Collector<L>, at: &Option<L>) {
+fn missing<L: Clone>(
+    name: &'static str,
+    cx: &DecodeContext,
+    errs: &mut Collector<L>,
+    at: &Option<L>,
+) {
     // Fail-fast reports only the first problem.
     if cx.options.accumulate || !errs.has_errors() {
         errs.push(DecodeError::at(
@@ -290,14 +295,16 @@ where
     G: Fn(&RecordType) -> &C::Output,
 {
     FieldCodec {
-            name,
-            codec,
-            get,
-            _record: PhantomData,
-        }
+        name,
+        codec,
+        get,
+        _record: PhantomData,
+    }
 }
 
-impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &C::Output> Fields for FieldCodec<C, G, RecordType> {
+impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &C::Output> Fields
+    for FieldCodec<C, G, RecordType>
+{
     type RecordType = RecordType;
     type Slots = Slot<C::Output>;
     type Values = C::Output;
@@ -372,10 +379,10 @@ where
     D: Fn() -> C::Output,
 {
     DefaultFieldCodec {
-            inner: field(name, codec, get),
-            default,
-            _record: PhantomData,
-        }
+        inner: field(name, codec, get),
+        default,
+        _record: PhantomData,
+    }
 }
 
 impl<RecordType, C, G, D> Fields for DefaultFieldCodec<C, G, D, RecordType>
@@ -404,7 +411,14 @@ where
         slot: &mut Self::Slots,
         record_state: &mut RecordDecodeState<'_, R::Location>,
     ) -> DecodeResult<(), R> {
-        decode_into(self.inner.name, &self.inner.codec, r, cx, slot, record_state)
+        decode_into(
+            self.inner.name,
+            &self.inner.codec,
+            r,
+            cx,
+            slot,
+            record_state,
+        )
     }
     fn check(&self, slot: &Self::Slots, _missing: &mut dyn FnMut(&'static str)) -> bool {
         !matches!(slot, Slot::Failed)
@@ -454,7 +468,11 @@ impl<C: Clone, G: Clone, RecordType> Clone for OptionalFieldCodec<C, G, RecordTy
     }
 }
 
-pub fn optional_field<RecordType, C, G>(name: &'static str, codec: C, get: G) -> OptionalFieldCodec<C, G, RecordType>
+pub fn optional_field<RecordType, C, G>(
+    name: &'static str,
+    codec: C,
+    get: G,
+) -> OptionalFieldCodec<C, G, RecordType>
 where
     C: Codec<Output: Sized>,
     G: Fn(&RecordType) -> &Option<C::Output>,
@@ -524,7 +542,14 @@ impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &Option<C::Outpu
         s: &mut S,
         cx: &mut EncodeContext,
     ) -> Result<(), S::Error> {
-        encode_optional_field(self.name, &self.codec, (self.get)(rec), self.skip_none, s, cx)
+        encode_optional_field(
+            self.name,
+            &self.codec,
+            (self.get)(rec),
+            self.skip_none,
+            s,
+            cx,
+        )
     }
 }
 
@@ -579,7 +604,10 @@ impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &Vec<(String, C:
     const CLAIMS_UNKNOWN_KEYS: bool = true;
 
     fn new_slots(&self) -> Self::Slots {
-        ExtrasSlot { entries: Vec::new(), failed: false }
+        ExtrasSlot {
+            entries: Vec::new(),
+            failed: false,
+        }
     }
     fn names(&self, _out: &mut Vec<&'static str>) {}
     #[inline]
@@ -668,7 +696,10 @@ impl<InnerRecord: Clone, G: Clone, Outer> Clone for FieldsOfCodec<InnerRecord, G
 /// Read another record's fields from the *current* object: explicit
 /// flattening. Both field sets are static, so unknown-field checks see
 /// the merged set.
-pub fn fields_of<Outer, InnerRecord, G>(inner: InnerRecord, get: G) -> FieldsOfCodec<InnerRecord, G, Outer>
+pub fn fields_of<Outer, InnerRecord, G>(
+    inner: InnerRecord,
+    get: G,
+) -> FieldsOfCodec<InnerRecord, G, Outer>
 where
     InnerRecord: RecordCodec,
     G: Fn(&Outer) -> &InnerRecord::Output,
@@ -680,7 +711,9 @@ where
     }
 }
 
-impl<Outer, InnerRecord: RecordCodec, G: Fn(&Outer) -> &InnerRecord::Output> Fields for FieldsOfCodec<InnerRecord, G, Outer> {
+impl<Outer, InnerRecord: RecordCodec, G: Fn(&Outer) -> &InnerRecord::Output> Fields
+    for FieldsOfCodec<InnerRecord, G, Outer>
+{
     type RecordType = Outer;
     type Slots = <InnerRecord::Fields as Fields>::Slots;
     type Values = InnerRecord::Output;
@@ -712,7 +745,9 @@ impl<Outer, InnerRecord: RecordCodec, G: Fn(&Outer) -> &InnerRecord::Output> Fie
         slots: &mut Self::Slots,
         record_state: &mut RecordDecodeState<'_, R::Location>,
     ) -> DecodeResult<bool, R> {
-        self.inner.fields().decode_extra(key, r, cx, slots, record_state)
+        self.inner
+            .fields()
+            .decode_extra(key, r, cx, slots, record_state)
     }
     fn check(&self, slots: &Self::Slots, missing: &mut dyn FnMut(&'static str)) -> bool {
         self.inner.fields().check(slots, missing)
@@ -985,7 +1020,11 @@ impl<F: Fields, B: Build<F>> Decoder for Record<F, B> {
     /// The key loop is shared by every record (generic only over the
     /// reader); per record there is just the index dispatch, the
     /// missing-field check and `build`.
-    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<F::RecordType, R> {
+    fn decode<R: Reader + ?Sized>(
+        &self,
+        r: &mut R,
+        cx: &mut DecodeContext,
+    ) -> DecodeResult<F::RecordType, R> {
         let at = r.here();
         let mut names = cx.take_name_buf();
         self.fields.names(&mut names);
@@ -1006,7 +1045,8 @@ impl<F: Fields, B: Build<F>> Decoder for Record<F, B> {
                         .decode_at(i, r, cx, &mut slots, &mut record_state)
                         .map(|()| true),
                     None if F::CLAIMS_UNKNOWN_KEYS => {
-                        self.fields.decode_extra(key, r, cx, &mut slots, &mut record_state)
+                        self.fields
+                            .decode_extra(key, r, cx, &mut slots, &mut record_state)
                     }
                     None => Ok(false),
                 }
@@ -1093,7 +1133,12 @@ impl<RecordType> FieldsFor<RecordType> {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn optional<C, G>(self, name: &'static str, codec: C, get: G) -> OptionalFieldCodec<C, G, RecordType>
+    pub fn optional<C, G>(
+        self,
+        name: &'static str,
+        codec: C,
+        get: G,
+    ) -> OptionalFieldCodec<C, G, RecordType>
     where
         C: Codec<Output: Sized>,
         G: Fn(&RecordType) -> &Option<C::Output>,
@@ -1127,7 +1172,11 @@ impl<RecordType> FieldsFor<RecordType> {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn flatten<InnerRecord, G>(self, inner: InnerRecord, get: G) -> FieldsOfCodec<InnerRecord, G, RecordType>
+    pub fn flatten<InnerRecord, G>(
+        self,
+        inner: InnerRecord,
+        get: G,
+    ) -> FieldsOfCodec<InnerRecord, G, RecordType>
     where
         InnerRecord: RecordCodec,
         G: Fn(&RecordType) -> &InnerRecord::Output,
