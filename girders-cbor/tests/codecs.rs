@@ -166,7 +166,7 @@ fn floats_use_the_shortest_exact_width() {
 
 #[test]
 fn tags_are_checked_where_the_format_has_them() {
-    let epoch = tagged(1, u64());
+    let epoch = cbor_tag(1, u64());
     let bytes = encode(&1363896240, &epoch);
     assert_eq!(bytes, hex("c11a514b67b0"));
     assert_eq!(decode(&bytes, &epoch).unwrap(), 1363896240);

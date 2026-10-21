@@ -80,7 +80,7 @@ pub struct Area {
 /// Exactly `[]`. There is no fixed-length/empty array codec, so go through
 /// a list (whose element codec is never used) and reject non-empty input.
 fn empty_array() -> impl Codec<Output = [(); 0]> + Clone {
-    try_bimap(
+    try_convert(
         list(null()),
         |v: Vec<()>| {
             if v.is_empty() {

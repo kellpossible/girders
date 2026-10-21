@@ -149,7 +149,7 @@ fn config() -> impl Codec<Output = Config> {
     record((
         field("host", string(), |c: &Config| &c.host),
         field("port", u16(), |c: &Config| &c.port),
-        field_default("debug", bool(), |c: &Config| &c.debug, || false),
+        field_with_default("debug", bool(), |c: &Config| &c.debug, || false),
     ))
     .build(|(host, port, debug)| Config { host, port, debug })
 }
@@ -194,7 +194,7 @@ fn errors_point_at_the_variable() {
             ("APP_DEBUG", "maybe"),
             ("APP_HSOT", "x"),
         ],
-        DecodeOptions::strict(),
+        DecodeOptions::all_errors(),
     )
     .unwrap_err();
     assert_eq!(

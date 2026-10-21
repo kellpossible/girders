@@ -46,7 +46,7 @@ impl DecodeOptions {
     }
 
     /// Everything on, accumulate all errors.
-    pub const fn strict() -> Self {
+    pub const fn all_errors() -> Self {
         DecodeOptions {
             accumulate: true,
             ..Self::new()

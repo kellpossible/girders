@@ -105,7 +105,7 @@ fn accumulating_errors_pins_and_rewinds_correctly_while_streaming() {
         entries[0].1 = Value::Text("not a number".into());
     }
     let bytes = encode(&tree, &value());
-    let options = DecodeOptions::strict();
+    let options = DecodeOptions::all_errors();
     let from_slice = decode_with(&bytes, &list(point()), options).unwrap_err();
     let from_stream = from_reader_with(Trickle(&bytes), &list(point()), options, 1).unwrap_err();
     assert_eq!(from_slice.len(), 3);

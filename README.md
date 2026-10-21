@@ -42,9 +42,9 @@ and serde.
   several codecs: one per API version, a lenient one and a strict one,
   one for a wire format and one for storage. Codecs are built and
   combined at runtime like any other value: renaming, defaults,
-  validation (`refine`), mapping (`bimap`), tagged unions, versioned
+  validation (`refine`), conversion (`convert`), tagged unions, versioned
   documents with migrations, and splicing one record's fields into
-  another (`fields_of`).
+  another (`flatten`).
 - **One definition for both directions.** A record lists each field
   once, with the getter used to encode it, so decode and encode can't
   drift apart.

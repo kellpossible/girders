@@ -50,8 +50,8 @@ pub mod prelude {
     pub use crate::packed::packed;
     pub use crate::reader::{Kind, Reader};
     pub use crate::record::{
-        Duplicates, Fields, FieldsFor, RecordCodec, extras, field, field_default, fields_for,
-        fields_of, optional_field, record,
+        Duplicates, Fields, FieldsFor, RecordCodec, field, field_with_default, fields_for, flatten,
+        optional_field, record, unknown_fields,
     };
     pub use crate::recursive::{Recursive, recursive};
     pub use crate::serializer::Serializer;

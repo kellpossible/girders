@@ -218,7 +218,7 @@ fn accumulated_errors_point_at_byte_offsets() {
         (Value::Text("raw".into()), Value::Bytes(vec![])),
     ]);
     let bytes = encode(&tree, &value());
-    let err = decode_with(&bytes, &reading(), DecodeOptions::strict()).unwrap_err();
+    let err = decode_with(&bytes, &reading(), DecodeOptions::all_errors()).unwrap_err();
     assert_eq!(err.len(), 2, "{err}");
     let offsets: Vec<_> = err.iter().map(|e| e.location.unwrap().start()).collect();
     // After the map head (1 byte) and "sensor" (7 bytes); then after -1

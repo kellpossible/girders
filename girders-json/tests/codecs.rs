@@ -8,7 +8,7 @@ fn dec<C: Decoder>(c: &C, s: &str) -> Result<C::Output, girders_json::Error> {
 }
 
 fn acc<C: Decoder>(c: &C, s: &str) -> girders_json::Error {
-    girders_json::decode_with(s, c, DecodeOptions::strict())
+    girders_json::decode_with(s, c, DecodeOptions::all_errors())
         .err()
         .expect("expected errors")
 }
@@ -117,7 +117,7 @@ struct Open {
 fn extras_collects_unknown_keys() {
     let c = record((
         field("name", string(), |o: &Open| &o.name),
-        extras(value(), |o: &Open| &o.rest),
+        unknown_fields(value(), |o: &Open| &o.rest),
     ))
     .build(|(name, rest)| Open { name, rest });
     let input = r#"{"a":1,"name":"n","b":[true]}"#;
@@ -141,7 +141,7 @@ fn field_default_and_skip_none() {
     }
     let c = record((
         field("port", u16(), |p: &P| &p.port),
-        field_default("tls", bool(), |p: &P| &p.tls, || true),
+        field_with_default("tls", bool(), |p: &P| &p.tls, || true),
     ))
     .build(|(port, tls)| P { port, tls });
     assert_eq!(
@@ -188,7 +188,7 @@ fn pagination() -> impl RecordCodec<Output = Pagination> {
 #[test]
 fn fields_of_flattens_explicitly() {
     let c = record((
-        fields_of(pagination(), |p: &Page| &p.pagination),
+        flatten(pagination(), |p: &Page| &p.pagination),
         field("items", list(string()), |p: &Page| &p.items),
     ))
     .build(|(pagination, items)| Page { pagination, items });

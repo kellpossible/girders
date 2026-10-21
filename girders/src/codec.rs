@@ -429,16 +429,16 @@ wide_int_codec!(U128Codec, u128, u128);
 /// times). Decoding requires the tag, in formats that have tags. Formats
 /// without tags skip the check on decoding and drop the tag on encoding.
 #[derive(Debug, Clone, Copy)]
-pub struct Tagged<C> {
+pub struct CborTag<C> {
     tag: u64,
     inner: C,
 }
 
-pub const fn tagged<C: Codec>(tag: u64, inner: C) -> Tagged<C> {
-    Tagged { tag, inner }
+pub const fn cbor_tag<C: Codec>(tag: u64, inner: C) -> CborTag<C> {
+    CborTag { tag, inner }
 }
 
-impl<C: Decoder> Decoder for Tagged<C> {
+impl<C: Decoder> Decoder for CborTag<C> {
     type Output = C::Output;
     fn decode<R: Reader + ?Sized>(
         &self,
@@ -462,7 +462,7 @@ impl<C: Decoder> Decoder for Tagged<C> {
     }
 }
 
-impl<C: Encoder> Encoder for Tagged<C> {
+impl<C: Encoder> Encoder for CborTag<C> {
     type Input = C::Input;
     fn encode<S: Serializer + ?Sized>(
         &self,
@@ -584,24 +584,24 @@ impl<C: Encoder<Input: Sized>> Encoder for SpannedCodec<C> {
 
 /// A total isomorphism: `to` decodes, `from` encodes.
 #[derive(Debug, Clone, Copy)]
-pub struct BiMap<C, F, G> {
+pub struct Convert<C, F, G> {
     inner: C,
     to: F,
     from: G,
 }
 
 /// Wrap a codec in a total isomorphism (newtypes).
-pub fn bimap<C, F, G, B>(inner: C, to: F, from: G) -> BiMap<C, F, G>
+pub fn convert<C, F, G, B>(inner: C, to: F, from: G) -> Convert<C, F, G>
 where
     C: Codec<Output: Sized>,
     F: Fn(C::Output) -> B,
     G: Fn(&B) -> C::Output,
 {
-    BiMap { inner, to, from }
+    Convert { inner, to, from }
 }
 
 impl<C: Codec<Output: Sized>, F: Fn(C::Output) -> B, G: Fn(&B) -> C::Output, B> Decoder
-    for BiMap<C, F, G>
+    for Convert<C, F, G>
 {
     type Output = B;
     #[inline]
@@ -610,7 +610,7 @@ impl<C: Codec<Output: Sized>, F: Fn(C::Output) -> B, G: Fn(&B) -> C::Output, B> 
     }
 }
 impl<C: Codec<Output: Sized>, F: Fn(C::Output) -> B, G: Fn(&B) -> C::Output, B> Encoder
-    for BiMap<C, F, G>
+    for Convert<C, F, G>
 {
     type Input = B;
     #[inline]
@@ -627,23 +627,23 @@ impl<C: Codec<Output: Sized>, F: Fn(C::Output) -> B, G: Fn(&B) -> C::Output, B> 
 /// A fallible decode with a total encode. The `Err` message becomes a
 /// `ValidationFailed` at the offending value's location.
 #[derive(Debug, Clone, Copy)]
-pub struct TryBiMap<C, F, G> {
+pub struct TryConvert<C, F, G> {
     inner: C,
     to: F,
     from: G,
 }
 
-pub fn try_bimap<C, F, G, B, E>(inner: C, to: F, from: G) -> TryBiMap<C, F, G>
+pub fn try_convert<C, F, G, B, E>(inner: C, to: F, from: G) -> TryConvert<C, F, G>
 where
     C: Codec<Output: Sized>,
     F: Fn(C::Output) -> Result<B, E>,
     E: Display,
     G: Fn(&B) -> C::Output,
 {
-    TryBiMap { inner, to, from }
+    TryConvert { inner, to, from }
 }
 
-impl<C, F, G, B, E> Decoder for TryBiMap<C, F, G>
+impl<C, F, G, B, E> Decoder for TryConvert<C, F, G>
 where
     C: Codec<Output: Sized>,
     F: Fn(C::Output) -> Result<B, E>,
@@ -660,7 +660,7 @@ where
         })
     }
 }
-impl<C, F, G, B, E> Encoder for TryBiMap<C, F, G>
+impl<C, F, G, B, E> Encoder for TryConvert<C, F, G>
 where
     C: Codec<Output: Sized>,
     F: Fn(C::Output) -> Result<B, E>,
@@ -813,11 +813,14 @@ impl<D: Decoder, F: Fn(D::Output) -> Result<B, E>, B, E: Display> Decoder for Tr
 
 /// Decoder-only: choose the next decoder from a decoded value.
 #[derive(Debug, Clone, Copy)]
-pub struct Then<D, F>(D, F);
-pub fn then<D: Decoder, F: Fn(D::Output) -> D2, D2: Decoder>(decoder: D, f: F) -> Then<D, F> {
-    Then(decoder, f)
+pub struct AndThen<D, F>(D, F);
+pub fn and_then<D: Decoder, F: Fn(D::Output) -> D2, D2: Decoder>(
+    decoder: D,
+    f: F,
+) -> AndThen<D, F> {
+    AndThen(decoder, f)
 }
-impl<D: Decoder, F: Fn(D::Output) -> D2, D2: Decoder> Decoder for Then<D, F> {
+impl<D: Decoder, F: Fn(D::Output) -> D2, D2: Decoder> Decoder for AndThen<D, F> {
     type Output = D2::Output;
     fn decode<R: Reader + ?Sized>(
         &self,
@@ -831,11 +834,11 @@ impl<D: Decoder, F: Fn(D::Output) -> D2, D2: Decoder> Decoder for Then<D, F> {
 
 /// Decoder-only: produce a value without reading input.
 #[derive(Debug, Clone, Copy)]
-pub struct Success<T>(T);
-pub fn success<T: Clone>(value: T) -> Success<T> {
-    Success(value)
+pub struct Always<T>(T);
+pub fn always<T: Clone>(value: T) -> Always<T> {
+    Always(value)
 }
-impl<T: Clone> Decoder for Success<T> {
+impl<T: Clone> Decoder for Always<T> {
     type Output = T;
     fn decode<R: Reader + ?Sized>(
         &self,

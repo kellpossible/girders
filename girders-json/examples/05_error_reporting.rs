@@ -74,7 +74,8 @@ pub fn main() {
 
     // Accumulate mode reports every problem at once.
     let input = r#"{"name": 1, "server": {"host": 2, "port": "x"}, "extra": true}"#;
-    let e = girders_json::decode_with(input, &config_codec(), DecodeOptions::strict()).unwrap_err();
+    let e =
+        girders_json::decode_with(input, &config_codec(), DecodeOptions::all_errors()).unwrap_err();
     assert_eq!(e.len(), 4);
     println!("{}", diagnostic::render_short(&e, input));
     println!("05_error_reporting ok");

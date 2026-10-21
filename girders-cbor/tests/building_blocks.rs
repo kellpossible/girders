@@ -84,7 +84,7 @@ impl Ord for Ordered {
 }
 
 fn f64_key() -> impl Codec<Output = Ordered> {
-    bimap(f64(), Ordered, |o: &Ordered| o.0)
+    convert(f64(), Ordered, |o: &Ordered| o.0)
 }
 
 #[test]
@@ -157,9 +157,12 @@ fn value_errors_name_their_key_in_the_path() {
 #[test]
 fn accumulate_mode_reports_bad_keys_and_values_and_keeps_the_rest() {
     let codec = btree_map(u32(), u8());
-    let err =
-        girders_json::decode_with(r#"{"x":1,"2":300,"3":3}"#, &codec, DecodeOptions::strict())
-            .unwrap_err();
+    let err = girders_json::decode_with(
+        r#"{"x":1,"2":300,"3":3}"#,
+        &codec,
+        DecodeOptions::all_errors(),
+    )
+    .unwrap_err();
     assert_eq!(err.len(), 2, "{err}");
 }
 
@@ -220,7 +223,7 @@ fn array_element_errors_accumulate_with_their_index() {
     let err = girders_json::decode_with(
         "[1,300,3,400]",
         &array::<_, 4>(u8()),
-        DecodeOptions::strict(),
+        DecodeOptions::all_errors(),
     )
     .unwrap_err();
     let paths: Vec<Vec<PathSegment>> = err.iter().map(|e| e.path().cloned().collect()).collect();

@@ -3,7 +3,7 @@
 //! A record is a static tuple of field codecs. Decoding is one pass: each
 //! key is dispatched to its field, which decodes straight into a slot, so
 //! fields may come in any order and nothing is buffered. The field list is
-//! static, which is what makes strict unknown-field checks and `fields_of`
+//! static, which is what makes strict unknown-field checks and `flatten`
 //! possible.
 
 use crate::codec::{Codec, DecodeResult, Decoder, Encoder, decode_child};
@@ -120,7 +120,7 @@ pub trait Fields {
     /// How many names [`Fields::names`] reports.
     const NAME_COUNT: usize;
     /// Whether [`Fields::decode_extra`] can claim keys no field names
-    /// (only `extras` does). Records skip the call entirely otherwise.
+    /// (only `unknown_fields` does). Records skip the call entirely otherwise.
     const CLAIMS_UNKNOWN_KEYS: bool = false;
     /// Decode the value for the `i`th name (compact decoding: the key was
     /// already matched against the name table).
@@ -132,7 +132,7 @@ pub trait Fields {
         slots: &mut Self::Slots,
         record_state: &mut RecordDecodeState<'_, R::Location>,
     ) -> DecodeResult<(), R>;
-    /// Decode a key no field claimed (only `extras` does this).
+    /// Decode a key no field claimed (only `unknown_fields` does this).
     fn decode_extra<R: Reader + ?Sized>(
         &self,
         _key: &str,
@@ -368,7 +368,7 @@ impl<C: Clone, G: Clone, D: Clone, RecordType> Clone for DefaultFieldCodec<C, G,
     }
 }
 
-pub fn field_default<RecordType, C, G, D>(
+pub fn field_with_default<RecordType, C, G, D>(
     name: &'static str,
     codec: C,
     get: G,
@@ -554,28 +554,28 @@ impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &Option<C::Outpu
     }
 }
 
-// -- extras: collect unknown keys ------------------------------------------------
+// -- unknown_fields: collect unknown keys ------------------------------------------------
 
-/// Decode state for [`extras`]: the entries so far, and whether one of
+/// Decode state for [`unknown_fields`]: the entries so far, and whether one of
 /// them failed (accumulate mode).
 #[derive(Debug)]
-pub struct ExtrasSlot<V> {
+pub struct UnknownFieldsSlot<V> {
     entries: Vec<(String, V)>,
     failed: bool,
 }
 
 /// Collects every key no other field claims into `Vec<(String, V)>`,
 /// decoded with `codec` (e.g. a dynamic `Value` codec).
-pub struct ExtrasCodec<C, G, RecordType> {
+pub struct UnknownFieldsCodec<C, G, RecordType> {
     codec: C,
     get: G,
     _record: PhantomData<fn(&RecordType)>,
 }
 
-impl<C: Copy, G: Copy, RecordType> Copy for ExtrasCodec<C, G, RecordType> {}
-impl<C: Clone, G: Clone, RecordType> Clone for ExtrasCodec<C, G, RecordType> {
+impl<C: Copy, G: Copy, RecordType> Copy for UnknownFieldsCodec<C, G, RecordType> {}
+impl<C: Clone, G: Clone, RecordType> Clone for UnknownFieldsCodec<C, G, RecordType> {
     fn clone(&self) -> Self {
-        ExtrasCodec {
+        UnknownFieldsCodec {
             codec: self.codec.clone(),
             get: self.get.clone(),
             _record: PhantomData,
@@ -583,12 +583,12 @@ impl<C: Clone, G: Clone, RecordType> Clone for ExtrasCodec<C, G, RecordType> {
     }
 }
 
-pub fn extras<RecordType, C, G>(codec: C, get: G) -> ExtrasCodec<C, G, RecordType>
+pub fn unknown_fields<RecordType, C, G>(codec: C, get: G) -> UnknownFieldsCodec<C, G, RecordType>
 where
     C: Codec<Output: Sized>,
     G: Fn(&RecordType) -> &Vec<(String, C::Output)>,
 {
-    ExtrasCodec {
+    UnknownFieldsCodec {
         codec,
         get,
         _record: PhantomData,
@@ -596,16 +596,16 @@ where
 }
 
 impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &Vec<(String, C::Output)>> Fields
-    for ExtrasCodec<C, G, RecordType>
+    for UnknownFieldsCodec<C, G, RecordType>
 {
     type RecordType = RecordType;
-    type Slots = ExtrasSlot<C::Output>;
+    type Slots = UnknownFieldsSlot<C::Output>;
     type Values = Vec<(String, C::Output)>;
     const NAME_COUNT: usize = 0;
     const CLAIMS_UNKNOWN_KEYS: bool = true;
 
     fn new_slots(&self) -> Self::Slots {
-        ExtrasSlot {
+        UnknownFieldsSlot {
             entries: Vec::new(),
             failed: false,
         }
@@ -667,9 +667,9 @@ impl<RecordType, C: Codec<Output: Sized>, G: Fn(&RecordType) -> &Vec<(String, C:
     }
 }
 
-// -- fields_of: splice another record's fields into this object -----------------
+// -- flatten: splice another record's fields into this object -----------------
 
-/// A record whose field set can be reused by [`fields_of`].
+/// A record whose field set can be reused by [`flatten`].
 pub trait RecordCodec: Codec<Output: Sized> {
     type Fields: Fields<RecordType = Self::Output>;
     fn fields(&self) -> &Self::Fields;
@@ -677,16 +677,16 @@ pub trait RecordCodec: Codec<Output: Sized> {
     fn build_slots(&self, slots: <Self::Fields as Fields>::Slots) -> Self::Output;
 }
 
-pub struct FieldsOfCodec<InnerRecord, G, Outer> {
+pub struct FlattenCodec<InnerRecord, G, Outer> {
     inner: InnerRecord,
     get: G,
     _record: PhantomData<fn(&Outer)>,
 }
 
-impl<InnerRecord: Copy, G: Copy, Outer> Copy for FieldsOfCodec<InnerRecord, G, Outer> {}
-impl<InnerRecord: Clone, G: Clone, Outer> Clone for FieldsOfCodec<InnerRecord, G, Outer> {
+impl<InnerRecord: Copy, G: Copy, Outer> Copy for FlattenCodec<InnerRecord, G, Outer> {}
+impl<InnerRecord: Clone, G: Clone, Outer> Clone for FlattenCodec<InnerRecord, G, Outer> {
     fn clone(&self) -> Self {
-        FieldsOfCodec {
+        FlattenCodec {
             inner: self.inner.clone(),
             get: self.get.clone(),
             _record: PhantomData,
@@ -697,15 +697,15 @@ impl<InnerRecord: Clone, G: Clone, Outer> Clone for FieldsOfCodec<InnerRecord, G
 /// Read another record's fields from the *current* object: explicit
 /// flattening. Both field sets are static, so unknown-field checks see
 /// the merged set.
-pub fn fields_of<Outer, InnerRecord, G>(
+pub fn flatten<Outer, InnerRecord, G>(
     inner: InnerRecord,
     get: G,
-) -> FieldsOfCodec<InnerRecord, G, Outer>
+) -> FlattenCodec<InnerRecord, G, Outer>
 where
     InnerRecord: RecordCodec,
     G: Fn(&Outer) -> &InnerRecord::Output,
 {
-    FieldsOfCodec {
+    FlattenCodec {
         inner,
         get,
         _record: PhantomData,
@@ -713,7 +713,7 @@ where
 }
 
 impl<Outer, InnerRecord: RecordCodec, G: Fn(&Outer) -> &InnerRecord::Output> Fields
-    for FieldsOfCodec<InnerRecord, G, Outer>
+    for FlattenCodec<InnerRecord, G, Outer>
 {
     type RecordType = Outer;
     type Slots = <InnerRecord::Fields as Fields>::Slots;
@@ -1148,7 +1148,7 @@ impl<RecordType> FieldsFor<RecordType> {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn default<C, G, D>(
+    pub fn with_default<C, G, D>(
         self,
         name: &'static str,
         codec: C,
@@ -1160,16 +1160,16 @@ impl<RecordType> FieldsFor<RecordType> {
         G: Fn(&RecordType) -> &C::Output,
         D: Fn() -> C::Output,
     {
-        field_default(name, codec, get, default)
+        field_with_default(name, codec, get, default)
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn extras<C, G>(self, codec: C, get: G) -> ExtrasCodec<C, G, RecordType>
+    pub fn unknown_fields<C, G>(self, codec: C, get: G) -> UnknownFieldsCodec<C, G, RecordType>
     where
         C: Codec<Output: Sized>,
         G: Fn(&RecordType) -> &Vec<(String, C::Output)>,
     {
-        extras(codec, get)
+        unknown_fields(codec, get)
     }
 
     #[allow(clippy::type_complexity)]
@@ -1177,11 +1177,11 @@ impl<RecordType> FieldsFor<RecordType> {
         self,
         inner: InnerRecord,
         get: G,
-    ) -> FieldsOfCodec<InnerRecord, G, RecordType>
+    ) -> FlattenCodec<InnerRecord, G, RecordType>
     where
         InnerRecord: RecordCodec,
         G: Fn(&RecordType) -> &InnerRecord::Output,
     {
-        fields_of(inner, get)
+        flatten(inner, get)
     }
 }

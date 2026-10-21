@@ -1,6 +1,6 @@
 //! Example 04: validation and newtypes.
 //!
-//! `bimap` wraps a codec in a total isomorphism (a newtype). `try_bimap`
+//! `convert` wraps a codec in a total isomorphism (a newtype). `try_convert`
 //! adds a fallible decode: the error becomes a `ValidationFailed` at the
 //! offending value's span, while encoding stays total. `refine` validates
 //! without changing the type.
@@ -11,14 +11,14 @@ use girders::prelude::*;
 pub struct UserId(pub String);
 
 pub fn user_id_codec() -> impl Codec<Output = UserId> {
-    bimap(string(), UserId, |id: &UserId| id.0.clone())
+    convert(string(), UserId, |id: &UserId| id.0.clone())
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Email(pub String);
 
 pub fn email_codec() -> impl Codec<Output = Email> {
-    try_bimap(
+    try_convert(
         string(),
         |raw: String| {
             if raw.contains('@') {

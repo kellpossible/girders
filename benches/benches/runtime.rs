@@ -73,7 +73,7 @@ fn opts(kind: &str) -> (String, DecodeOptions) {
         "no_locations" => DecodeOptions::new().locations(false),
         "no_paths" => DecodeOptions::new().paths(false),
         "fast" => DecodeOptions::fast(),
-        "accumulate" => DecodeOptions::strict(),
+        "accumulate" => DecodeOptions::all_errors(),
         _ => unreachable!(),
     };
     (data("twitter.json"), o)

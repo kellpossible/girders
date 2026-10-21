@@ -238,7 +238,7 @@ fn indices() -> impl Codec<Output = Indices> + Clone {
 
 /// `[]` only, like json-benchmark's `empty::Array`.
 fn empty_array() -> impl Codec<Output = [(); 0]> + Clone {
-    try_bimap(
+    try_convert(
         list(null()),
         |v: Vec<()>| if v.is_empty() { Ok([]) } else { Err("expected an empty array") },
         |_: &[(); 0]| Vec::new(),

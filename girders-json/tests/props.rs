@@ -109,7 +109,7 @@ proptest! {
         let json = girders_json::encode(&v, &value()).unwrap();
         let c = list(rec());
         let fast = girders_json::decode(&json, &c);
-        let all = girders_json::decode_with(&json, &c, DecodeOptions::strict());
+        let all = girders_json::decode_with(&json, &c, DecodeOptions::all_errors());
         prop_assert_eq!(fast.is_ok(), all.is_ok());
         if let (Err(f), Err(a)) = (fast, all) {
             let first = f.first().clone();

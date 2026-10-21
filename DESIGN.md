@@ -95,8 +95,8 @@ designed but never built:
 | JSONTestSuite conformance | built | port |
 | **Streaming driver** | not built | new (§4.4) |
 | **Accumulating errors** | not built | new (§5.3) |
-| **Strict unknown fields**, `allow_unknown`, extras | not built | new (§6.4) |
-| **`fields_of`** (explicit flatten) | not built | new (§6.5) |
+| **Strict unknown fields**, `allow_unknown`, `unknown_fields` | not built | new (§6.4) |
+| **`flatten`** (explicit) | not built | new (§6.5) |
 | **Schema** (`SchemaNode`, JSON Schema emitter) | not built | new (§7) |
 | **Versioning** (`versioned`) | not built | new (§8) |
 | **Decode options** (spans/paths/accumulate/depth) | not built | new (§5.4) |
@@ -121,7 +121,7 @@ girder-rs/                    (directory name unchanged)
       serializer.rs           trait Serializer
       decode.rs               trait Decoder + primitive/structural combinators
       encode.rs               trait Encoder + combinators
-      codec.rs                trait Codec, bimap, try_bimap, list, optional, map...
+      codec.rs                trait Codec, convert, try_convert, list, optional, map...
       record.rs               applicative record builder, tuple impls (macro_rules!)
       union.rs                tagged_union, adjacent_union, one_of
       versioned.rs            versioned codec
@@ -384,7 +384,7 @@ pub struct DecodeOptions {
 }
 ```
 
-Presets: `default()`, `strict()` (everything on, accumulate),
+Presets: `default()`, `all_errors()` (everything on, accumulate),
 `fast()` (everything off).
 
 [OPEN Q7] Runtime flags cost one branch per primitive. The alternative
@@ -439,7 +439,7 @@ Ported from Gleam:
 - Basic combinators: `optional`, `success`, `fail`, `map`, `then`,
   `try_map`, `guard`, `spanned`, `list`, `entries`, `dict`
   (`HashMap`/`BTreeMap`), `one_of`, `tagged_union`.
-- Codec combinators: `bimap`, `try_bimap`, `refine` (§7.3), `recursive`
+- Codec combinators: `convert`, `try_convert`, `refine` (§7.3), `recursive`
   (§7.4).
 
 ### 6.3 Record builder: applicative, not monadic
@@ -447,7 +447,7 @@ Ported from Gleam:
 The Gleam builder is a monadic `use`-chain. It doesn't port to Rust (no
 `use` sugar), and it **can't describe its own shape**: later fields only
 exist inside closures that need values. That rules out schema
-extraction, strict unknown-field checking and `fields_of`, which all
+extraction, strict unknown-field checking and `flatten`, which all
 need the field list up front. girders uses a static field list instead:
 
 ```rust
@@ -490,7 +490,7 @@ fn user() -> impl Codec<Output = User> {
 - **Reusing a record.** `record(…).build(…)` returns a `Record` that also
   implements a `RecordCodec: Codec` trait, which exposes the field set.
   Reusable records return `impl RecordCodec<Output = T>` so that
-  `fields_of` can take them. In the spike, without this trait, the
+  `flatten` can take them. In the spike, without this trait, the
   return type had to be spelled out in full.
 - **Compile errors.** The spike's usual mistakes all give short errors
   that point at the user's code: a getter with the wrong type, a field
@@ -502,7 +502,7 @@ Strict by default (design report §9.1):
 
 - An unknown key is an `UnknownField { name, expected }` error.
 - `.allow_unknown()` skips unknown keys.
-- `.with_extras(name, getter, value_codec)` collects unknown keys into a
+- `unknown_fields(value_codec, getter)` collects unknown keys into a
   `Vec<(String, V)>` field. The user supplies a codec for `V`, such as
   `girders_json::value()`, so the core never needs its own dynamic value
   type.
@@ -514,13 +514,13 @@ Duplicate keys:
   (`DuplicateField`) by default, which fits "strict by default", with
   `.first_wins()` and `.last_wins()` as opt-outs.
 
-### 6.5 `fields_of`
+### 6.5 `flatten`
 
-`fields_of(other_record)` adds another record's fields to the current
+`flatten(other_record, getter)` adds another record's fields to the current
 object (design report §9.3):
 
 ```rust
-record((fields_of(pagination()), field("users", list(user()), |p: &Page| &p.users)))
+record((flatten(pagination(), |p: &Page| &p.pagination), field("users", list(user()), |p: &Page| &p.users)))
     .build(|(pagination, users)| Page { pagination, users })
 ```
 
@@ -674,8 +674,8 @@ struct, a library macro, a boxed codec tied to one format, and an
 ### 7.5 Interaction with other features
 
 - **Strict records** emit `additionalProperties: false`.
-- **`with_extras`** emits a typed `additionalProperties`.
-- **`fields_of`** merges the field sets.
+- **`unknown_fields`** emits a typed `additionalProperties`.
+- **`flatten`** merges the field sets.
 - **Unions** emit `oneOf` with a tag `const`.
 - **Versioned codecs** emit two schemas (§8.4).
 
@@ -869,7 +869,7 @@ change nothing.
 | Addition | Default for formats without it | CBOR |
 |---|---|---|
 | `Kind::Bytes`, `read_bytes`, `write_bytes` | An array of numbers 0–255 | Byte strings |
-| `Kind::Tag`, `supports_tags` (reader and serializer), `read_tag`, `write_tag` | No tags: `tagged(n, c)` neither checks nor writes them | Tags; `tagged(n, c)` requires tag `n` |
+| `Kind::Tag`, `supports_tags` (reader and serializer), `read_tag`, `write_tag` | No tags: `cbor_tag(n, c)` neither checks nor writes them | Tags; `cbor_tag(n, c)` requires tag `n` |
 | `Kind::Simple`, `read_simple`, `write_simple` | Written as `null` | `undefined` and other simple values |
 | `object_next_entry` (reader) | `Problem::Unsupported` | Keys of any kind, read as values |
 | `object_key_value` (serializer, required) | JSON: strings and integers (quoted) only | Keys of any kind |
@@ -1171,7 +1171,7 @@ Each item points back to the section of this document it changes.
   `empty_object()` codec for fieldless variants (`{"type":"point"}`).
 - **§6.4 (records):**
   - `Duplicates::{Error, FirstWins, LastWins}`.
-  - `field_default(...)`, `extras(codec, getter)` for unknown keys, and
+  - `field_with_default(...)`, `unknown_fields(codec, getter)` for unknown keys, and
     `OptField::skip_none()`.
   - The field-name list for `UnknownField` is computed only when the
     error happens (it used to allocate per record).
@@ -1211,3 +1211,15 @@ Each item points back to the section of this document it changes.
   dependency for segmentation).
 - **Spike:** `spikes/codec-shape/` was converted to `no_std` for the
   ESP32/Cortex-M build check. Its findings still apply (`FINDINGS.md`).
+- **Renames before 0.1.0, for readability:**
+  - `tagged` → `cbor_tag`, which kept CBOR tags apart from tagged unions.
+  - `DecodeOptions::strict()` → `all_errors()`: strict elsewhere means
+    rejecting unknown fields.
+  - `fields_of` → `flatten`, one name for the free function and the
+    `fields_for` method.
+  - `extras` → `unknown_fields`.
+  - `bimap` / `try_bimap` → `convert` / `try_convert`.
+  - `then` → `and_then`, as in Rust's `Option` and `Result`.
+  - `success` → `always`.
+  - `field_default` → `field_with_default`, and the `fields_for` method
+    `default` → `with_default`.
