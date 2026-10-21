@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 fn keys(n: usize, set: &str) -> Vec<String> {
     match set {
-        "colliding" => unimplemented!("needs the hash index"),
+        "colliding" => girders_json::value::colliding_keys(n),
         _ => (0..n)
             .map(|i| format!("key_{i:x}_{}", i * 7919 % 1000))
             .collect(),
@@ -31,7 +31,7 @@ fn main() {
             "{{{}}}",
             keys.iter()
                 .enumerate()
-                .map(|(i, k)| format!("{k:?}:{i}"))
+                .map(|(i, k)| format!("{}:{i}", girders_json::encode(k, &girders::codec::string())))
                 .collect::<Vec<_>>()
                 .join(",")
         );
@@ -46,6 +46,16 @@ fn main() {
                 .collect(),
         );
         let v = girders_json::parse(&json).unwrap();
+        // Look keys up in a scrambled order, so neither index benefits from
+        // lookups that follow its layout.
+        let mut keys = keys.clone();
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        for i in (1..keys.len()).rev() {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            keys.swap(i, (seed % (i as u64 + 1)) as usize);
+        }
         let lookups = median(
             (0..runs)
                 .map(|_| {

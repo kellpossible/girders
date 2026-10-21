@@ -298,6 +298,74 @@ floats are written as single precision (5 bytes each).
 with non-string keys) costs 0.4% (canada, twitter) to 1.0% (citm) of
 encode instructions.
 
+## Spikes: size hints and a hash index for large objects
+
+### Size hints (preallocation)
+
+`Reader::size_hint` gives the length of a CBOR definite-length array or
+map. JSON never gives one. `list()` and both `Value` types pre-size their
+`Vec`s from it, capped at 1 MiB of elements. CBOR decode, in instructions
+(Callgrind), with hints off and then on:
+
+| CBOR decode | Without hints | With hints | Change | Bytes allocated |
+|---|---:|---:|---:|---:|
+| typed canada | 43.36 M | 42.66 M | −1.6% | −13% |
+| typed citm | 24.57 M | 23.64 M | −3.8% | −3% |
+| typed twitter | 13.56 M | 13.51 M | −0.4% | −6% |
+| `Value` canada | 76.27 M | 70.49 M | −7.6% | −19% |
+| `Value` citm | 35.25 M | 33.68 M | −4.5% | −17% |
+| `Value` twitter | 17.47 M | 16.36 M | −6.4% | −20% |
+
+Bytes are whole-process figures (setup included), so the percentages
+understate the decoder's own saving. typed canada gains little because its
+coordinate pairs are fixed-size tuples, not `Vec`s.
+
+### A hash index for large `Value` objects
+
+Objects with more than 64 entries used to get a sorted index of
+positions. Now they get a hash table instead, at most half full, with a
+small built-in FxHash-style hash.
+
+- **Collisions:** the hash is fixed, because there's no randomness
+  without `std`, so input can be crafted to collide. If any key lands more
+  than 64 slots from its home bucket while the table is being built, the
+  object falls back to the sorted index.
+- **Lookups:** that same bound caps every lookup at 65 probes.
+
+Wall clock is from `benches/examples/value_lookups.rs`: one object of n keys,
+looked up in a scrambled order, release build. The attack uses keys built
+to share one 64-bit hash (`colliding_keys`).
+
+| n | Lookup, sorted | Lookup, hash | Parse, sorted | Parse, hash | Attack lookup, sorted | Attack lookup, hash | Attack parse, sorted | Attack parse, hash |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 57 ns | 18 ns | 9.5 µs | 9.6 µs | 58 ns | 58 ns | 17.1 µs | 28.8 µs |
+| 1,000 | 98 ns | 22 ns | 94 µs | 98 µs | 98 ns | 99 ns | 237 µs | 260 µs |
+| 10,000 | 228 ns | 48 ns | 0.95 ms | 1.04 ms | 243 ns | 242 ns | 2.73 ms | 2.84 ms |
+| 100,000 | 1,267 ns | 264 ns | 10.9 ms | 12.0 ms | 1,243 ns | 1,401 ns | 38.0 ms | 39.9 ms |
+
+Lookups are per lookup; parse is the whole object. For comparison,
+`indexmap` measured 19–34 ns per lookup in the earlier table, but in
+insertion order.
+
+- **Lookups** are 3–5× faster at every size.
+- **Parsing** a large object costs up to 10% more, for hashing every key
+  and a table of 16–32 bytes per entry (the sorted index used 4).
+- **Under attack**, lookups are the same as the sorted index's, because
+  that is what the object falls back to. Parsing pays for the abandoned
+  table: about 12 µs per object, which is +68% for a 100-key object and
+  +5% at 100,000 keys.
+
+On the benchmark documents (Callgrind instructions):
+
+- **citm:** its 184 lookups in a 184-key object go from 104,835 to 34,718
+  instructions (−67%).
+- **twitter:** its 301 lookups in small objects are unchanged, since no
+  index is built below 64 keys.
+- **Parsing** canada, twitter and citm changes by 0–1%. That is within the
+  noise between builds: serde_json's own numbers, whose code didn't
+  change, moved by 1–4% when the bench binary was rebuilt.
+- **Memory:** citm grows by 3 KB.
+
 ## Ergonomics (from writing the twitter and citm models)
 
 - **Wide records:** the 16-element tuple cap means nesting

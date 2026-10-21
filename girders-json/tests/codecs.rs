@@ -719,3 +719,43 @@ fn key_spans_only_when_requested() {
     };
     assert_eq!(m.key_span(0), None);
 }
+
+#[test]
+fn large_objects_use_a_hash_index_and_fall_back_when_keys_collide() {
+    use girders_json::{Node, value::colliding_keys};
+    let object = |keys: &[String]| {
+        let json = format!(
+            "{{{}}}",
+            keys.iter()
+                .enumerate()
+                .map(|(i, k)| format!("{}:{i}", girders_json::encode(k, &string())))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        girders_json::parse(&json).unwrap()
+    };
+    let check = |v: &Value, keys: &[String]| {
+        for (i, k) in keys.iter().enumerate() {
+            let found = v.get(k).and_then(|x| match &x.node {
+                Node::Number(n) => n.as_i64(),
+                _ => None,
+            });
+            assert_eq!(found, Some(i as i64), "{k:?}");
+        }
+        assert!(v.get("absent").is_none());
+    };
+    let normal: Vec<String> = (0..1000).map(|i| format!("key{i}")).collect();
+    let v = object(&normal);
+    let Node::Object(m) = &v.node else { panic!() };
+    assert!(m.is_hashed());
+    check(&v, &normal);
+
+    let colliding = colliding_keys(1000);
+    let v = object(&colliding);
+    let Node::Object(m) = &v.node else { panic!() };
+    assert!(
+        !m.is_hashed(),
+        "colliding keys fall back to the sorted index"
+    );
+    check(&v, &colliding);
+}

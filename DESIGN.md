@@ -799,8 +799,11 @@ removed to keep the type simple.
 - **`Object`:** entries in document order with duplicates kept, so
   re-encoding is lossless and lookups take the last occurrence.
   - Small objects are scanned linearly.
-  - Objects with more than 64 entries also get a sorted index of
-    positions, for O(log n) lookups with no hashing.
+  - Objects with more than 64 entries also get a hash index of
+    positions. The hash is fixed (no randomness without `std`), so if a
+    key lands more than 64 slots from home while the table is built
+    (crafted collisions), the object uses a sorted index instead. Lookups
+    take one or two probes normally, and O(log n) under attack.
   - Key spans are kept in an optional side table, only when
     `DecodeOptions::key_spans` is on.
 - `Value::without_spans()` is for comparing trees structurally.
