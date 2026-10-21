@@ -13,6 +13,9 @@ std = ["girders/std"]
 
 [dependencies]
 girders = { path = "../girders", default-features = false }
+# Keyed hashing for the large-object index (see `value`): the one exception to
+# zero dependencies, so the security-relevant hash is a vetted implementation.
+siphasher = { version = "1.0.4", default-features = false }
 
 [dev-dependencies]
 insta = "1.49.0"

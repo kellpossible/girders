@@ -23,6 +23,12 @@ pub struct DecodeOptions {
     /// support it. Off by default: it costs memory per key. Needs
     /// `track_locations`.
     pub key_spans: bool,
+    /// A secret 128-bit key for hashing object keys in dynamic value trees
+    /// that index large objects, so input can't be crafted to collide.
+    /// `None` uses a random per-process key where the platform has one
+    /// (`std`), and a fixed key otherwise. Without `std`, pass a key from
+    /// a hardware random number generator if you have one.
+    pub hash_key: Option<[u64; 2]>,
 }
 
 impl DecodeOptions {
@@ -34,6 +40,7 @@ impl DecodeOptions {
             accumulate: false,
             max_depth: Some(128),
             key_spans: false,
+            hash_key: None,
         }
     }
 
@@ -53,6 +60,7 @@ impl DecodeOptions {
             accumulate: false,
             max_depth: Some(128),
             key_spans: false,
+            hash_key: None,
         }
     }
 
@@ -80,6 +88,13 @@ impl DecodeOptions {
     pub const fn key_spans(self, on: bool) -> Self {
         DecodeOptions {
             key_spans: on,
+            ..self
+        }
+    }
+
+    pub const fn hash_key(self, key: [u64; 2]) -> Self {
+        DecodeOptions {
+            hash_key: Some(key),
             ..self
         }
     }

@@ -49,10 +49,15 @@ measurements.
 
 ### 1.2 Hard constraints
 
-- **Zero runtime or build dependencies.** `girders` and `girders-json`
-  use std only: empty `[dependencies]`, no build scripts. This affects
-  several choices below (own ordered map, hand-written diagnostics, std
-  float parsing and formatting).
+- **Zero runtime or build dependencies, with one exception.**
+  `girders`, `girders-json` and `girders-cbor` use `core` and `alloc`
+  only (std optionally), and have no build scripts. This affects several
+  choices below (own ordered map, hand-written diagnostics, std float
+  parsing and formatting).
+  - **The exception:** `girders-json` depends on `siphasher` (no `std`, no
+    dependencies of its own) for the keyed hash behind the large-object
+    index (§9.3). That hash is what defends against crafted collisions,
+    so it uses a vetted implementation rather than our own.
 - **No serde.** girders has its own data model. Optional serde interop
   is possible later, behind a feature flag.
 - Dev-dependencies (tests and benchmarks) are allowed, but kept small.
@@ -800,10 +805,16 @@ removed to keep the type simple.
   re-encoding is lossless and lookups take the last occurrence.
   - Small objects are scanned linearly.
   - Objects with more than 64 entries also get a hash index of
-    positions. The hash is fixed (no randomness without `std`), so if a
-    key lands more than 64 slots from home while the table is built
-    (crafted collisions), the object uses a sorted index instead. Lookups
-    take one or two probes normally, and O(log n) under attack.
+    positions: Robin Hood probing, at most half full, keyed SipHash-1-3
+    (`siphasher`).
+  - **The key:** `DecodeOptions::hash_key` if given (for example from a
+    hardware random number generator without `std`); otherwise a random
+    per-process key with `std`, and a fixed key without it.
+  - **The fallback:** if any key lands more than 32 slots from home while
+    the table is built, the object uses a sorted index instead. Honest
+    keys measured at most 16, even with 2^22 entries. So even an attacker
+    who knows the key (no `std`, no key given) gets O(log n) lookups and
+    about 7–30% extra parse time. Every lookup is capped at 33 probes.
   - Key spans are kept in an optional side table, only when
     `DecodeOptions::key_spans` is on.
 - `Value::without_spans()` is for comparing trees structurally.

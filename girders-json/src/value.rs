@@ -12,6 +12,7 @@ use alloc::vec::Vec;
 use girders::codec::DecodeResult;
 use girders::prelude::*;
 use girders::{Number, Span};
+use siphasher::sip::SipHasher13;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Value {
@@ -34,11 +35,13 @@ pub enum Node {
 ///
 /// Small objects are a plain `Vec` scanned linearly, the fastest option
 /// at that size. Objects with more than [`Object::INDEX_THRESHOLD`]
-/// entries also get an index of positions: a hash table, so lookups take
-/// one or two probes. The hash is fixed (there is no randomness without
-/// `std`), so input can be crafted to collide; if any key lands more than
-/// [`MAX_PROBES`] slots from home, the table is dropped for a sorted index
-/// instead, so lookups stay O(log n) whatever the input.
+/// entries also get an index of positions: a hash table keyed with
+/// SipHash-1-3 (the `siphasher` crate), so lookups take one or two probes. The key is
+/// `DecodeOptions::hash_key`, else random per process with `std`. Without
+/// `std` and without a key it is fixed, so input can be crafted to collide:
+/// if any key lands more than [`MAX_PROBES`] slots from home, the object
+/// uses a sorted index instead, and lookups stay O(log n) whatever the
+/// input.
 ///
 /// Key spans (where each key appears in the source) are recorded only when
 /// decoding with `DecodeOptions::key_spans`; otherwise they cost nothing.
@@ -62,120 +65,164 @@ struct Extra {
 enum Index {
     #[default]
     None,
-    /// Open addressing with linear probing, at most half full. Each slot
-    /// holds the key's hash fragment and its position + 1 (0 = empty).
-    /// A repeated key's slot points at its last occurrence.
-    Hashed(Vec<(u32, u32)>),
-    /// The fallback for colliding input: positions sorted by key, then by
+    Hashed(HashTable),
+    /// The fallback when keys collide: positions sorted by key, then by
     /// position.
     Sorted(Vec<u32>),
 }
 
 /// How far from its home slot a key may land before the hash table is
-/// abandoned for the sorted index. Random keys stay well within this at
-/// half load; it also bounds every lookup.
-pub const MAX_PROBES: usize = 64;
+/// abandoned for the sorted index; it also bounds every lookup. With Robin
+/// Hood probing at half load, honest keys measured at most 16 even with
+/// 2^22 entries (`longest_probe_for_honest_keys`).
+pub const MAX_PROBES: usize = 32;
 
-const HASH_MULTIPLIER: u64 = 0xf135_7aea_2e62_a9c5;
-
-/// A fast, fixed hash of a key's bytes (FxHash-style).
-fn hash_key(key: &str) -> u64 {
-    let bytes = key.as_bytes();
-    let mut h = bytes.len() as u64;
-    let mut chunks = bytes.chunks_exact(8);
-    for chunk in &mut chunks {
-        let word = u64::from_le_bytes(chunk.try_into().expect("8 bytes"));
-        h = (h.rotate_left(5) ^ word).wrapping_mul(HASH_MULTIPLIER);
+/// The key for objects decoded without `DecodeOptions::hash_key`: random
+/// per process with `std`, fixed without it (the sorted fallback then
+/// guards against crafted collisions).
+fn default_hash_key() -> [u64; 2] {
+    #[cfg(feature = "std")]
+    {
+        static KEY: std::sync::OnceLock<[u64; 2]> = std::sync::OnceLock::new();
+        *KEY.get_or_init(|| {
+            use std::hash::BuildHasher;
+            let state = std::collections::hash_map::RandomState::new();
+            [state.hash_one(0u64), state.hash_one(1u64)]
+        })
     }
-    let mut tail = [0u8; 8];
-    tail[..chunks.remainder().len()].copy_from_slice(chunks.remainder());
-    h = (h.rotate_left(5) ^ u64::from_le_bytes(tail)).wrapping_mul(HASH_MULTIPLIER);
-    h ^ (h >> 29)
+    #[cfg(not(feature = "std"))]
+    {
+        [0x0706_0504_0302_0100, 0x0f0e_0d0c_0b0a_0908]
+    }
 }
 
-/// Keys of 16 ASCII bytes that all have the same hash: what an attacker
-/// can build against a fixed hash. For tests and benchmarks.
-#[doc(hidden)]
-pub fn colliding_keys(n: usize) -> Vec<String> {
-    let target = hash_key("0123456789abcdef");
-    // The second word, given the first, is fixed by the target; retry the
-    // first until the second is ASCII.
-    let first_rounds = |w1: u64| {
-        let h = (16u64.rotate_left(5) ^ w1).wrapping_mul(HASH_MULTIPLIER);
-        h.rotate_left(5)
-    };
-    let pre_tail = {
-        // Undo `h ^ (h >> 29)` and the last two rounds to find the state
-        // before the second word that every key must reach.
-        let mut h = target;
-        h ^= h >> 29;
-        h ^= h >> 58;
-        let inverse = modular_inverse(HASH_MULTIPLIER);
-        let after_tail = h.wrapping_mul(inverse).rotate_right(5);
-        // The tail round mixed in an empty (zero) tail word.
-        after_tail.wrapping_mul(inverse)
-    };
-    let mut keys = Vec::with_capacity(n);
-    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-    while keys.len() < n {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let w1 = seed & 0x7f7f_7f7f_7f7f_7f7f;
-        let w2 = pre_tail ^ first_rounds(w1);
-        if w2 & 0x8080_8080_8080_8080 != 0 {
-            continue;
+/// The 32 hash bits a slot keeps: they pick the home slot and filter key
+/// comparisons.
+///
+/// The hash is SipHash-1-3 (what Rust's `HashMap` uses): keyed, so without
+/// the key collisions can't be computed.
+///
+/// It comes from the `siphasher` crate, girders-json's one dependency: this
+/// is the security-relevant part of the index, so it uses a vetted
+/// implementation rather than our own.
+fn slot_hash(hasher: &SipHasher13, text: &str) -> u32 {
+    (hasher.hash(text.as_bytes()) >> 32) as u32
+}
+
+/// Positions of an object's entries by key: open addressing with linear,
+/// Robin Hood probing, at most half full. A repeated key's slot points at
+/// its last occurrence.
+#[derive(Debug, Clone)]
+struct HashTable {
+    key: [u64; 2],
+    hasher: SipHasher13,
+    /// `(hash bits, position + 1)`; position 0 marks an empty slot.
+    slots: Vec<(u32, u32)>,
+}
+
+impl HashTable {
+    /// The table for `entries`, or `None` if some key lands more than
+    /// `limit` slots from home. Also returns the largest distance from
+    /// home (for measuring).
+    fn build(entries: &[Entry], key: [u64; 2], limit: usize) -> Option<(Self, usize)> {
+        let capacity = (entries.len() * 2).next_power_of_two();
+        let mut table = HashTable {
+            key,
+            hasher: SipHasher13::new_with_keys(key[0], key[1]),
+            slots: alloc::vec![(0, 0); capacity],
+        };
+        let mut longest = 0;
+        for (pos, entry) in entries.iter().enumerate() {
+            longest = longest.max(table.insert(entries, &entry.key, pos, limit)?);
         }
-        let mut bytes = Vec::with_capacity(16);
-        bytes.extend_from_slice(&w1.to_le_bytes());
-        bytes.extend_from_slice(&w2.to_le_bytes());
-        let key = String::from_utf8(bytes).expect("ASCII");
-        debug_assert_eq!(hash_key(&key), target);
-        keys.push(key);
+        Some((table, longest))
+    }
+
+    fn home(&self, hash: u32) -> usize {
+        hash as usize & (self.slots.len() - 1)
+    }
+
+    fn distance(&self, slot: usize, hash: u32) -> usize {
+        slot.wrapping_sub(self.home(hash)) & (self.slots.len() - 1)
+    }
+
+    /// Record `text` at `pos` (overwriting an earlier occurrence of the
+    /// same key). Returns the largest distance from home this caused, or
+    /// `None` past `limit`.
+    fn insert(&mut self, entries: &[Entry], text: &str, pos: usize, limit: usize) -> Option<usize> {
+        let mask = self.slots.len() - 1;
+        let mut carried = (slot_hash(&self.hasher, text), pos as u32 + 1);
+        let mut i = self.home(carried.0);
+        let mut distance = 0;
+        let mut longest = 0;
+        // Until something is displaced, the key itself may already be in
+        // the table further along; after that, the carried entry is unique.
+        let mut may_be_present = true;
+        loop {
+            if distance > limit {
+                return None;
+            }
+            longest = longest.max(distance);
+            let slot = self.slots[i];
+            if slot.1 == 0 {
+                self.slots[i] = carried;
+                return Some(longest);
+            }
+            if may_be_present && slot.0 == carried.0 && entries[slot.1 as usize - 1].key == text {
+                self.slots[i].1 = carried.1;
+                return Some(longest);
+            }
+            let resident = self.distance(i, slot.0);
+            if resident < distance {
+                // Robin Hood: the entry nearer its home moves on instead.
+                self.slots[i] = carried;
+                carried = slot;
+                distance = resident;
+                may_be_present = false;
+            }
+            i = (i + 1) & mask;
+            distance += 1;
+        }
+    }
+
+    fn find(&self, entries: &[Entry], text: &str) -> Option<usize> {
+        let mask = self.slots.len() - 1;
+        let hash = slot_hash(&self.hasher, text);
+        let mut i = self.home(hash);
+        for distance in 0..=MAX_PROBES {
+            let (h, p) = self.slots[i];
+            // An empty slot, or an entry nearer its home than this key would
+            // be, ends the search: Robin Hood keeps them in that order.
+            if p == 0 || self.distance(i, h) < distance {
+                return None;
+            }
+            if h == hash && entries[p as usize - 1].key == text {
+                return Some(p as usize - 1);
+            }
+            i = (i + 1) & mask;
+        }
+        None
+    }
+}
+
+/// `n` keys for one object, of which `MAX_PROBES + 2` share a home slot
+/// under `key`: what an attacker who knows the key builds to force the
+/// sorted fallback. For tests and benchmarks.
+#[doc(hidden)]
+pub fn keys_forcing_fallback(n: usize, key: [u64; 2]) -> Vec<String> {
+    let mask = (n * 2).next_power_of_two() - 1;
+    let hasher = SipHasher13::new_with_keys(key[0], key[1]);
+    let colliding = (MAX_PROBES + 2).min(n);
+    let mut keys: Vec<String> = (0..n - colliding).map(|i| alloc::format!("k{i}")).collect();
+    let mut candidate = 0u64;
+    while keys.len() < n {
+        let text = alloc::format!("c{candidate}");
+        candidate += 1;
+        if slot_hash(&hasher, &text) as usize & mask == 0 {
+            keys.push(text);
+        }
     }
     keys
-}
-
-/// The inverse of an odd number modulo 2^64 (Newton's iteration).
-fn modular_inverse(a: u64) -> u64 {
-    let mut x = a;
-    for _ in 0..6 {
-        x = x.wrapping_mul(2u64.wrapping_sub(a.wrapping_mul(x)));
-    }
-    x
-}
-
-/// A hash table of positions for `entries`, or `None` if some key lands
-/// more than [`MAX_PROBES`] from home.
-fn build_hashed(entries: &[Entry]) -> Option<Vec<(u32, u32)>> {
-    let capacity = (entries.len() * 2).next_power_of_two();
-    let mut slots = alloc::vec![(0u32, 0u32); capacity];
-    for (pos, entry) in entries.iter().enumerate() {
-        insert_hashed(&mut slots, entries, &entry.key, pos)?;
-    }
-    Some(slots)
-}
-
-/// Record `key` at `pos` (overwriting an earlier occurrence); `None` if
-/// it lands too far from home.
-fn insert_hashed(slots: &mut [(u32, u32)], entries: &[Entry], key: &str, pos: usize) -> Option<()> {
-    let mask = slots.len() - 1;
-    let h = hash_key(key);
-    let tag = h as u32;
-    let mut i = (h >> 32) as usize & mask;
-    for _ in 0..=MAX_PROBES {
-        let (t, p) = slots[i];
-        if p == 0 {
-            slots[i] = (tag, pos as u32 + 1);
-            return Some(());
-        }
-        if t == tag && entries[p as usize - 1].key == key {
-            slots[i].1 = pos as u32 + 1;
-            return Some(());
-        }
-        i = (i + 1) & mask;
-    }
-    None
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -267,9 +314,10 @@ impl Object {
         let key = self.entries[pos].key.as_str();
         let updated = match &mut x.index {
             Index::None => None,
-            Index::Hashed(slots) => (slots.len() >= 2 * (pos + 1))
-                .then(|| insert_hashed(slots, &self.entries, key, pos))
-                .flatten(),
+            Index::Hashed(table) => (table.slots.len() >= 2 * (pos + 1))
+                .then(|| table.insert(&self.entries, key, pos, MAX_PROBES))
+                .flatten()
+                .map(|_| ()),
             Index::Sorted(ix) => {
                 let slot = ix.partition_point(|&p| self.entries[p as usize].key.as_str() <= key);
                 ix.insert(slot, pos as u32);
@@ -302,6 +350,14 @@ impl Object {
     /// Build (or drop) the index to match the current size: a hash table,
     /// or the sorted index if the keys collide too much.
     pub fn reindex(&mut self) {
+        let key = match self.extra.as_deref().map(|x| &x.index) {
+            Some(Index::Hashed(table)) => table.key,
+            _ => default_hash_key(),
+        };
+        self.reindex_with(key);
+    }
+
+    fn reindex_with(&mut self, key: [u64; 2]) {
         if self.entries.len() <= Self::INDEX_THRESHOLD {
             if let Some(x) = &mut self.extra {
                 x.index = Index::None;
@@ -309,8 +365,8 @@ impl Object {
             self.drop_empty_extra();
             return;
         }
-        let index = match build_hashed(&self.entries) {
-            Some(slots) => Index::Hashed(slots),
+        let index = match HashTable::build(&self.entries, key, MAX_PROBES) {
+            Some((table, _)) => Index::Hashed(table),
             None => {
                 let mut ix: Vec<u32> = (0..self.entries.len() as u32).collect();
                 // Stable: equal keys stay in document order, so the last one
@@ -353,9 +409,11 @@ impl Object {
         self.entries.push(Entry { key, value });
     }
 
-    fn finish(&mut self) {
+    /// After decoding: build the index, hashing with `key` (else the
+    /// default key).
+    fn finish(&mut self, key: Option<[u64; 2]>) {
         if self.entries.len() > Self::INDEX_THRESHOLD {
-            self.reindex();
+            self.reindex_with(key.unwrap_or_else(default_hash_key));
         }
     }
 
@@ -372,24 +430,7 @@ impl Object {
     fn position(&self, key: &str) -> Option<usize> {
         match self.extra.as_deref().map(|x| &x.index) {
             None | Some(Index::None) => self.entries.iter().rposition(|e| e.key == key),
-            Some(Index::Hashed(slots)) => {
-                let mask = slots.len() - 1;
-                let h = hash_key(key);
-                let tag = h as u32;
-                let mut i = (h >> 32) as usize & mask;
-                // Every key was placed within MAX_PROBES of home.
-                for _ in 0..=MAX_PROBES {
-                    let (t, p) = slots[i];
-                    if p == 0 {
-                        return None;
-                    }
-                    if t == tag && self.entries[p as usize - 1].key == key {
-                        return Some(p as usize - 1);
-                    }
-                    i = (i + 1) & mask;
-                }
-                None
-            }
+            Some(Index::Hashed(table)) => table.find(&self.entries, key),
             Some(Index::Sorted(ix)) => {
                 let end = ix.partition_point(|&p| self.entries[p as usize].key.as_str() <= key);
                 let p = *ix.get(end.checked_sub(1)?)? as usize;
@@ -426,7 +467,7 @@ impl Value {
         for (k, v) in entries {
             m.push_decoded(k, None, v);
         }
-        m.finish();
+        m.finish(None);
         Self::new(Node::Object(m))
     }
 
@@ -562,7 +603,7 @@ fn decode_value<R: Reader + ?Sized>(r: &mut R, cx: &mut DecodeContext) -> Decode
                     })?;
                     m.push_decoded(core::mem::take(&mut key), key_span, v);
                 }
-                m.finish();
+                m.finish(cx.options.hash_key);
                 Ok(m)
             })?;
             r.end_object()?;
@@ -627,5 +668,34 @@ impl Encoder for ValueCodec {
         _cx: &mut EncodeContext,
     ) -> Result<(), S::Error> {
         encode_value(v, s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The largest distance from home for honest keys, per table size at
+    /// the highest load (exactly half full). Run with `--ignored
+    /// --nocapture` to choose `MAX_PROBES`.
+    #[test]
+    #[ignore]
+    fn longest_probe_for_honest_keys() {
+        for shift in [6, 8, 10, 12, 14, 16, 18, 20, 22] {
+            let n = 1usize << shift;
+            let mut worst = 0;
+            for trial in 0..5u64 {
+                let entries: Vec<Entry> = (0..n)
+                    .map(|i| Entry {
+                        key: alloc::format!("key{trial}_{i}"),
+                        value: Value::null(),
+                    })
+                    .collect();
+                let key = [trial.wrapping_mul(0x9e37_79b9), !trial];
+                let (_, longest) = HashTable::build(&entries, key, usize::MAX).unwrap();
+                worst = worst.max(longest);
+            }
+            std::println!("n = 2^{shift}: longest probe {worst}");
+        }
     }
 }

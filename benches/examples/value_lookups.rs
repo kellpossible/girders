@@ -1,20 +1,26 @@
 //! Wall-clock cost of `Value` objects with many keys: parsing one object of
 //! n keys, then looking up every key once. Release build:
 //! `cargo run --release -p girders-benches --example value_lookups`.
-//! An optional argument names a key set: `normal` (default) or `colliding`
-//! (keys built to collide under the object index's hash, if it has one).
+//! An optional argument names a key set: `normal` (default) or `attack`
+//! (keys built to collide by someone who knows the hash key, decoded with
+//! that key: the worst case, as without `std` and without a key).
 
+use girders::DecodeOptions;
+use girders_json::value;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 fn keys(n: usize, set: &str) -> Vec<String> {
     match set {
-        "colliding" => girders_json::value::colliding_keys(n),
+        "attack" => girders_json::value::keys_forcing_fallback(n, KNOWN_KEY),
         _ => (0..n)
             .map(|i| format!("key_{i:x}_{}", i * 7919 % 1000))
             .collect(),
     }
 }
+
+/// The hash key the attacker knows (in `attack` mode).
+const KNOWN_KEY: [u64; 2] = [1, 2];
 
 fn median(mut samples: Vec<Duration>) -> Duration {
     samples.sort();
@@ -24,6 +30,25 @@ fn median(mut samples: Vec<Duration>) -> Duration {
 fn main() {
     let set = std::env::args().nth(1).unwrap_or_else(|| "normal".into());
     println!("key set: {set}");
+    let options = match set.as_str() {
+        "attack" => DecodeOptions::new().hash_key(KNOWN_KEY),
+        _ => DecodeOptions::new(),
+    };
+    // Warm up (caches, CPU frequency, the per-process hash key) so the
+    // first row isn't penalised.
+    for _ in 0..200 {
+        let _ = girders_json::decode_with(r#"{"a":1}"#, &value(), options);
+    }
+    let warm: String = format!(
+        "{{{}}}",
+        (0..1000)
+            .map(|i| format!("\"w{i}\":{i}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    for _ in 0..200 {
+        black_box(girders_json::decode_with(&warm, &value(), options).unwrap());
+    }
     println!("{:>8} {:>14} {:>14}", "n", "parse", "per lookup");
     for n in [100, 1_000, 10_000, 100_000] {
         let keys = keys(n, &set);
@@ -40,12 +65,14 @@ fn main() {
             (0..runs)
                 .map(|_| {
                     let t = Instant::now();
-                    black_box(girders_json::parse(black_box(&json)).unwrap());
+                    black_box(
+                        girders_json::decode_with(black_box(&json), &value(), options).unwrap(),
+                    );
                     t.elapsed()
                 })
                 .collect(),
         );
-        let v = girders_json::parse(&json).unwrap();
+        let v = girders_json::decode_with(&json, &value(), options).unwrap();
         // Look keys up in a scrambled order, so neither index benefits from
         // lookups that follow its layout.
         let mut keys = keys.clone();

@@ -722,8 +722,8 @@ fn key_spans_only_when_requested() {
 
 #[test]
 fn large_objects_use_a_hash_index_and_fall_back_when_keys_collide() {
-    use girders_json::{Node, value::colliding_keys};
-    let object = |keys: &[String]| {
+    use girders_json::{Node, value::keys_forcing_fallback};
+    let object = |keys: &[String], options: DecodeOptions| {
         let json = format!(
             "{{{}}}",
             keys.iter()
@@ -732,9 +732,11 @@ fn large_objects_use_a_hash_index_and_fall_back_when_keys_collide() {
                 .collect::<Vec<_>>()
                 .join(",")
         );
-        girders_json::parse(&json).unwrap()
+        girders_json::decode_with(&json, &value(), options).unwrap()
     };
-    let check = |v: &Value, keys: &[String]| {
+    let check = |v: &Value, keys: &[String], hashed: bool| {
+        let Node::Object(m) = &v.node else { panic!() };
+        assert_eq!(m.is_hashed(), hashed);
         for (i, k) in keys.iter().enumerate() {
             let found = v.get(k).and_then(|x| match &x.node {
                 Node::Number(n) => n.as_i64(),
@@ -745,17 +747,21 @@ fn large_objects_use_a_hash_index_and_fall_back_when_keys_collide() {
         assert!(v.get("absent").is_none());
     };
     let normal: Vec<String> = (0..1000).map(|i| format!("key{i}")).collect();
-    let v = object(&normal);
-    let Node::Object(m) = &v.node else { panic!() };
-    assert!(m.is_hashed());
-    check(&v, &normal);
+    check(&object(&normal, DecodeOptions::new()), &normal, true);
 
-    let colliding = colliding_keys(1000);
-    let v = object(&colliding);
-    let Node::Object(m) = &v.node else { panic!() };
-    assert!(
-        !m.is_hashed(),
-        "colliding keys fall back to the sorted index"
+    // An attacker who knows the hash key forces the sorted fallback, and
+    // lookups stay correct. The same keys under any other key don't collide.
+    let known = [1, 2];
+    let attack = keys_forcing_fallback(1000, known);
+    check(
+        &object(&attack, DecodeOptions::new().hash_key(known)),
+        &attack,
+        false,
     );
-    check(&v, &colliding);
+    check(
+        &object(&attack, DecodeOptions::new().hash_key([3, 4])),
+        &attack,
+        true,
+    );
+    check(&object(&attack, DecodeOptions::new()), &attack, true);
 }

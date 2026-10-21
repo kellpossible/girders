@@ -34,7 +34,10 @@ and serde.
 - **Small binaries.** Out-of-line decoding keeps code size flat as
   models grow, which matters on targets like the ESP32. Both crates are
   `no_std` + `alloc`.
-- **No dependencies.** Neither crate depends on anything.
+- **Almost no dependencies.** The one exception is `siphasher`, for
+  the keyed hash that protects `Value`'s index of large objects against
+  crafted collisions: security-sensitive code is better taken from a
+  vetted crate.
 - **Codecs are values, not trait impls.** The same type can have
   several codecs: one per API version, a lenient one and a strict one,
   one for a wire format and one for storage. Codecs are built and
@@ -56,7 +59,7 @@ and serde.
 | Definition | `#[derive]` and attributes on the type | Codec values, separate from the type |
 | Codecs per type | One (`Serialize`/`Deserialize` impls) | As many as you like |
 | Macros | Proc-macro derives | None |
-| Dependencies | `serde`, `serde_derive`, `syn`, `quote`, `proc-macro2`, … | None |
+| Dependencies | `serde`, `serde_derive`, `syn`, `quote`, `proc-macro2`, … | `siphasher` (girders-json only) |
 | Unknown fields | Accepted unless `deny_unknown_fields` | Rejected unless `.allow_unknown()` |
 | Errors | Line and column of the first error | Spans, paths, pointers; optionally every error |
 | Speed | Faster: girders decodes in 1.3–1.9× serde_json's instructions | Slower, in exchange for size and build time |

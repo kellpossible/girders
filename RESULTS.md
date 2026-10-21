@@ -364,6 +364,32 @@ insertion order.
   table: about 12 µs per object, which is +68% for a 100-key object and
   +5% at 100,000 keys.
 
+**Then: keyed SipHash and Robin Hood probing.** The fixed FxHash-style hash
+had seed-independent collisions: flipping a word's top bit changes the
+state predictably, so even a secret seed wouldn't help. It was replaced
+by keyed SipHash-1-3 from the `siphasher` crate, using its one-shot
+`hash`; the incremental `Hasher::write` doubled hashing cost for short
+keys. The key is caller-supplied, else random per process with `std`.
+
+Probing became Robin Hood, which keeps displacement low enough to lower
+the fallback bound to 32. The worst displacement measured for honest keys
+at half load was 3, 5, 7, 11 and 16 slots at 2^6, 2^10, 2^12, 2^18 and
+2^22 entries. Same benchmark as above, after a warm-up pass:
+
+| n | Lookup | Parse | Attacker knows the key: lookup | Attacker knows the key: parse |
+|---:|---:|---:|---:|---:|
+| 100 | 14 ns | 8.8 µs | 58 ns | 11.5 µs |
+| 1,000 | 18 ns | 91 µs | 96 ns | 111 µs |
+| 10,000 | 36 ns | 0.95 ms | 237 ns | 1.13 ms |
+| 100,000 | 220 ns | 12.4 ms | 1,485 ns | 13.2 ms |
+
+"Attacker knows the key" is the worst case: no `std` and no key given.
+The object then falls back to the sorted index. citm's 184 lookups take
+49,978 instructions (104,835 sorted, 34,718 with the unkeyed hash).
+Corpus parsing is within 1%.
+
+The earlier FxHash-style measurements follow.
+
 On the benchmark documents (Callgrind instructions):
 
 - **citm:** its 184 lookups in a 184-key object go from 104,835 to 34,718
