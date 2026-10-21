@@ -1,9 +1,10 @@
 //! The format-side contract for decoding.
 
-use crate::error::DecodeError;
+use crate::error::{DecodeError, Problem};
 use crate::number::Number;
 use crate::span::Span;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt::Debug;
 
 /// The broad classification of the next value, for dispatch and for
@@ -16,6 +17,13 @@ pub enum Kind {
     Null,
     Array,
     Object,
+    /// A byte string (binary formats).
+    Bytes,
+    /// A tag: a number annotating the value that follows (CBOR).
+    Tag,
+    /// A simple value other than `true`, `false` and `null`, such as
+    /// CBOR's `undefined`.
+    Simple,
     Eof,
 }
 
@@ -28,6 +36,9 @@ impl Kind {
             Kind::Null => "null",
             Kind::Array => "array",
             Kind::Object => "object",
+            Kind::Bytes => "bytes",
+            Kind::Tag => "tag",
+            Kind::Simple => "simple value",
             Kind::Eof => "end of input",
         }
     }
@@ -84,6 +95,34 @@ pub trait Reader {
     /// The number's source text (for `i128`, decimals, big integers).
     fn read_number_text(&mut self, buf: &mut String) -> DecodeResult<(), Self>;
 
+    /// Append the next byte string to `buf`. Formats without byte strings
+    /// use the default: an array of numbers from 0 to 255.
+    fn read_bytes(&mut self, buf: &mut Vec<u8>) -> DecodeResult<(), Self> {
+        self.begin_array()?;
+        let mut first = true;
+        while self.array_has_next(first)? {
+            first = false;
+            let at = self.here();
+            let b = self.read_u64()?;
+            let b = u8::try_from(b)
+                .map_err(|_| DecodeError::at(Problem::OutOfRange("byte above 255".into()), at))?;
+            buf.push(b);
+        }
+        self.end_array()
+    }
+    /// Whether the format has tags (see [`Kind::Tag`]).
+    fn supports_tags(&self) -> bool {
+        false
+    }
+    /// Read a tag number, leaving the reader at the tagged value.
+    fn read_tag(&mut self) -> DecodeResult<u64, Self> {
+        Err(mismatch(self, "tag"))
+    }
+    /// Read a simple value (see [`Kind::Simple`]) as its number.
+    fn read_simple(&mut self) -> DecodeResult<u8, Self> {
+        Err(mismatch(self, "simple value"))
+    }
+
     fn begin_array(&mut self) -> DecodeResult<(), Self>;
     /// `true` if another element follows (consuming any separator);
     /// `false` at the closing delimiter. `first` says whether no element
@@ -95,6 +134,15 @@ pub trait Reader {
     /// Append the next key to `buf` and return `true`, leaving the reader
     /// at its value; `false` at the closing delimiter.
     fn object_next_key(&mut self, first: bool, buf: &mut String) -> DecodeResult<bool, Self>;
+    /// Like [`Reader::object_next_key`], but leave the reader at the key so
+    /// it can be read as a value of any kind, followed by the entry's
+    /// value. Only formats with non-string keys (CBOR) support it.
+    fn object_next_entry(&mut self, _first: bool) -> DecodeResult<bool, Self> {
+        Err(DecodeError::at(
+            Problem::Unsupported("map keys other than strings".into()),
+            self.here(),
+        ))
+    }
     fn end_object(&mut self) -> DecodeResult<(), Self>;
 
     /// Skip one whole value of any kind.

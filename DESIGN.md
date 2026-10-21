@@ -6,8 +6,8 @@ Status: **draft for review, with a throwaway implementation.**
   recommended answers to the open questions, so those answers could be
   tested.
 - Measurements are in `RESULTS.md`.
-- §13 lists what the evidence settled and what still needs a decision.
-- §14 lists where the implementation departs from the text above.
+- §14 lists what the evidence settled and what still needs a decision.
+- §15 lists where the implementation departs from the text above.
 decision. Everything else reflects decisions already made or a
 recommendation that is accepted unless challenged.
 
@@ -56,7 +56,7 @@ measurements.
 - **No serde.** girders has its own data model. Optional serde interop
   is possible later, behind a feature flag.
 - Dev-dependencies (tests and benchmarks) are allowed, but kept small.
-  They are listed in §10.
+  They are listed in §11.
 
 ### 1.3 Non-goals for v1
 
@@ -86,7 +86,7 @@ designed but never built:
 | `Value` tree with spans | built | port, map type chosen by the caller (§9.3) |
 | JSON Pointer (RFC 6901) | built | port |
 | Diagnostics (line/col, caret snippet) | built | port, hand-written (§9.5) |
-| 7 example programs | built | port (§10.3) |
+| 7 example programs | built | port (§11.3) |
 | JSONTestSuite conformance | built | port |
 | **Streaming driver** | not built | new (§4.4) |
 | **Accumulating errors** | not built | new (§5.3) |
@@ -95,7 +95,7 @@ designed but never built:
 | **Schema** (`SchemaNode`, JSON Schema emitter) | not built | new (§7) |
 | **Versioning** (`versioned`) | not built | new (§8) |
 | **Decode options** (spans/paths/accumulate/depth) | not built | new (§5.4) |
-| **Benchmarks**, runtime and compile time vs serde_json | not built | new (§11) |
+| **Benchmarks**, runtime and compile time vs serde_json | not built | new (§12) |
 
 ---
 
@@ -104,7 +104,7 @@ designed but never built:
 ```
 girder-rs/                    (directory name unchanged)
   Cargo.toml                  [workspace], resolver 3, edition 2024
-  mise.toml                   tools + tasks (§12)
+  mise.toml                   tools + tasks (§13)
   DESIGN.md
   girders/                    core crate, published as `girders`
     src/
@@ -121,6 +121,7 @@ girder-rs/                    (directory name unchanged)
       union.rs                tagged_union, adjacent_union, one_of
       versioned.rs            versioned codec
       schema.rs               SchemaNode, SchemaCx, refinements
+  girders-cbor/               CBOR format (§10), published as `girders-cbor`
   girders-json/               JSON format, published as `girders-json`
     src/
       lib.rs                  decode/encode/parse entry points
@@ -823,9 +824,95 @@ public so users can feed their own diagnostic systems.
 
 ---
 
-## 10. Testing
+## 10. girders-cbor
 
-### 10.1 Dev-dependencies (researched 2026-10-20; latest versions)
+CBOR (RFC 8949) is the second format. It was chosen to test the
+format-neutral parts of the design: it has byte strings, tags, half
+floats, bignums, exact decimals and map keys of any kind, none of which
+JSON exercises.
+
+### 10.1 Format contract additions
+
+Each addition has a format-neutral default, so formats that don't need it
+change nothing.
+
+| Addition | Default for formats without it | CBOR |
+|---|---|---|
+| `Kind::Bytes`, `read_bytes`, `write_bytes` | An array of numbers 0–255 | Byte strings |
+| `Kind::Tag`, `supports_tags`, `read_tag`, `write_tag` | No tags: `tagged(n, c)` neither checks nor writes them | Tags; `tagged(n, c)` requires tag `n` |
+| `Kind::Simple`, `read_simple`, `write_simple` | Written as `null` | `undefined` and other simple values |
+| `object_next_entry` (reader) | `Problem::Unsupported` | Keys of any kind, read as values |
+| `object_key_value` (serializer, required) | JSON: strings and integers (quoted) only | Keys of any kind |
+| `Problem::Unsupported` | | |
+
+The JSON serializer's key mode costs up to 1% of encode instructions
+(RESULTS.md).
+
+### 10.2 Reader
+
+- Over a byte slice. Strict well-formedness: every RFC 8949 Appendix F
+  example is rejected.
+- Text must be valid UTF-8. Indefinite-length strings must be made of
+  definite chunks of the same type.
+- Records read text keys; any other key type is a type mismatch.
+- **Numbers keep full precision.**
+  - Integers cover CBOR's whole native range.
+  - Bignums (tags 2 and 3) and decimal fractions (tag 4) are exact
+    through `read_number_text`, so `i128` and `u128` work across the
+    full range.
+  - Half, single and double floats are all read.
+  - Integers are accepted where a float is expected; floats are never
+    accepted as integers.
+- `skip_value` is iterative, so nesting depth can't overflow the stack.
+
+### 10.3 Serializer
+
+- Preferred serialization: the shortest head for every length and
+  integer, and the shortest float width that is exact (half, single or
+  double).
+- Number text becomes an integer, a bignum, or a decimal fraction (tag 4).
+- Containers of unknown length are written with indefinite length.
+
+### 10.4 `Value`
+
+- Integers are `i128`; bignums too large for that stay as tags over their
+  bytes.
+- Floats keep their value but not their width.
+- Maps keep their order, with keys of any kind.
+- It prints as RFC 8949 diagnostic notation.
+- `girders_json::Value` also round-trips through CBOR, since it only uses
+  the JSON-shaped parts of the contract.
+
+### 10.5 Tests
+
+- RFC 8949 Appendix A (81 examples) and Appendix F (94 malformed inputs)
+  are vendored from the RFC under its Simplified BSD License, in
+  `girders-cbor/tests/rfc8949/`.
+- Typed codecs and cross-format behaviour:
+  - absent versus `null`, and `undefined` versus `null`;
+  - float narrowing;
+  - input from streaming encoders;
+  - unions and duplicate keys;
+  - accumulated errors with byte offsets;
+  - depth limits and truncation.
+- Property tests: arbitrary `Value`s round-trip, and arbitrary bytes
+  never panic.
+- The three json-benchmark models round-trip JSON → CBOR → model, and
+  Python's `cbor2` reads the output as the same data.
+
+### 10.6 Not yet
+
+- Streaming sources (`io::Read`, push).
+- Typed arrays (RFC 8746) and an `f16` codec.
+- Typed map keys (N3).
+- A serde-based CBOR baseline for benchmarks: this needs dependency
+  research.
+
+---
+
+## 11. Testing
+
+### 11.1 Dev-dependencies (researched 2026-10-20; latest versions)
 
 | Need | Choice | Alternatives considered | Why |
 |---|---|---|---|
@@ -835,7 +922,7 @@ public so users can feed their own diagnostic systems.
 Snapshot testing is simple enough to write ourselves, but insta's review
 workflow is worth having as a dev-only dependency.
 
-### 10.2 Suites
+### 11.2 Suites
 
 - **JSONTestSuite conformance**, pinned to the same commit as the Gleam
   repo (`1ef36fa01286573e846ac449e8683f8833c5b26a`) and fetched by a
@@ -859,7 +946,7 @@ workflow is worth having as a dev-only dependency.
 - **Env-var reader** (test only) proves the location type is generic
   (§5.1).
 
-### 10.3 Examples
+### 11.3 Examples
 
 The 7 Gleam examples are ported to `girders-json/examples/*.rs`:
 record, tagged_union, collections, validation, error_reporting,
@@ -869,9 +956,9 @@ the main place to compare ergonomics with Gleam.
 
 ---
 
-## 11. Benchmarks
+## 12. Benchmarks
 
-### 11.1 Runtime: gungraun
+### 12.1 Runtime: gungraun
 
 - **gungraun 0.20.0** (formerly iai-callgrind; 334★; released
   2026-09-26; active).
@@ -912,12 +999,12 @@ and serde_json side by side.
 The input files are plain JSON, so the Gleam version can be run over
 the same corpus later for a rough comparison.
 
-### 11.2 Compile time: hyperfine and cargo timings
+### 12.2 Compile time: hyperfine and cargo timings
 
 - There are two fixture crates, `bench-fixtures/models-serde` and
   `bench-fixtures/models-girders`. Each defines the **same ~20 model
   types**, including nested records, unions, optionals, maps, and the
-  corpus types from §11.1. One uses derive, the other girders codecs.
+  corpus types from §12.1. One uses derive, the other girders codecs.
 - **hyperfine 2.0.0** (29k★, released 2026-10-07) is a command-line tool
   installed through mise, not a crate dependency. It measures:
   1. a clean build of the fixture crate alone, with its dependencies
@@ -929,7 +1016,7 @@ the same corpus later for a rough comparison.
      one model.
 - `cargo build --timings` reports are kept for a per-crate breakdown.
 
-### 11.3 Comparing with Gleam
+### 12.3 Comparing with Gleam
 
 The comparison has three parts:
 - the same corpus;
@@ -942,7 +1029,7 @@ labelled as such.
 
 ---
 
-## 12. Tooling
+## 13. Tooling
 
 - **mise**, matching the Gleam repo:
   - Tools: Rust toolchain (pinned stable, currently 1.96), hyperfine
@@ -964,9 +1051,9 @@ labelled as such.
 
 ---
 
-## 13. Open questions
+## 14. Open questions
 
-### 13.1 Settled by the implementation (please confirm)
+### 14.1 Settled by the implementation (please confirm)
 
 These were implemented as recommended, and the evidence supports them.
 
@@ -984,7 +1071,7 @@ These were implemented as recommended, and the evidence supports them.
 | Q13 | Typed field factory `fields_for::<T>()` | Works: getters need no annotation. Both styles are available. |
 | no_std | `no_std` + `alloc`, with an optional `std` feature | Both crates build for Cortex-M4F and ESP32-C3. |
 
-### 13.2 Still open
+### 14.2 Still open
 
 (S1, S3 and S5 are closed: schema support was removed, see §7.)
 
@@ -1008,7 +1095,7 @@ These were implemented as recommended, and the evidence supports them.
 | ~~N10~~ | Encoding strategy | **Decided: encoding stays inline (generic over the serializer).** Out-of-line child calls, a `dyn` serializer, and both together were measured (RESULTS.md, "Encoding strategy"). They save at most 5.6% of release compile instructions and 2% of binary text, but every variant makes debug builds 0.9–1.3% slower and encoding up to 12% slower. Debug build time is the priority. |
 | N9 | Gleam comparison | Not run. The corpus is plain JSON in `benches/data`, ready for the Gleam side. |
 
-## 14. Where the implementation departs from the text
+## 15. Where the implementation departs from the text
 
 - **§7 (schema):** removed entirely: no `schema()` on codecs, no
   refinement hints, no JSON Schema emitter, and no `Recursive::NAME`.

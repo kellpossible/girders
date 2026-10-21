@@ -70,6 +70,9 @@ Measurements, including where the speed gap comes from, are in
 - `girders/`: format-agnostic codecs, records, unions, versioning.
 - `girders-json/`: JSON reader and serializer, streaming, the dynamic
   `Value` type.
+- `girders-cbor/`: CBOR (RFC 8949) reader and serializer with full
+  numeric precision, and a CBOR `Value`. The same codecs read and write
+  both formats.
 - `benches/`, `bench-fixtures/`: runtime, compile-time and binary-size
   comparisons with serde.
 - `spikes/`: experiments that shaped the API.

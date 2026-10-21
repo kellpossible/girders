@@ -512,6 +512,66 @@ library_benchmark_group!(
     benchmarks = [value_ordered_key_spans]
 );
 
+// -- CBOR: the same typed models in a binary format -----------------------------------
+
+fn canada_cbor(name: &str) -> Vec<u8> {
+    girders_cbor::encode(&canada_value(name), &canada::codec())
+}
+fn citm_cbor(name: &str) -> Vec<u8> {
+    girders_cbor::encode(&citm_value(name), &citm::codec())
+}
+fn twitter_cbor(name: &str) -> Vec<u8> {
+    girders_cbor::encode(&twitter_value(name), &twitter::codec())
+}
+
+#[library_benchmark]
+#[bench::canada(setup = canada_cbor, args = ["canada.json"])]
+fn decode_cbor_canada(bytes: Vec<u8>) -> canada::Canada {
+    black_box(girders_cbor::decode(black_box(&bytes), &canada::codec()).unwrap())
+}
+
+#[library_benchmark]
+#[bench::citm(setup = citm_cbor, args = ["citm_catalog.json"])]
+fn decode_cbor_citm(bytes: Vec<u8>) -> citm::CitmCatalog {
+    black_box(girders_cbor::decode(black_box(&bytes), &citm::codec()).unwrap())
+}
+
+#[library_benchmark]
+#[bench::twitter(setup = twitter_cbor, args = ["twitter.json"])]
+fn decode_cbor_twitter(bytes: Vec<u8>) -> twitter::Twitter {
+    black_box(girders_cbor::decode(black_box(&bytes), &twitter::codec()).unwrap())
+}
+
+#[library_benchmark]
+#[bench::canada(setup = canada_value, args = ["canada.json"])]
+fn encode_cbor_canada(v: canada::Canada) -> Vec<u8> {
+    black_box(girders_cbor::encode(black_box(&v), &canada::codec()))
+}
+
+#[library_benchmark]
+#[bench::citm(setup = citm_value, args = ["citm_catalog.json"])]
+fn encode_cbor_citm(v: citm::CitmCatalog) -> Vec<u8> {
+    black_box(girders_cbor::encode(black_box(&v), &citm::codec()))
+}
+
+#[library_benchmark]
+#[bench::twitter(setup = twitter_value, args = ["twitter.json"])]
+fn encode_cbor_twitter(v: twitter::Twitter) -> Vec<u8> {
+    black_box(girders_cbor::encode(black_box(&v), &twitter::codec()))
+}
+
+library_benchmark_group!(
+    name = cbor,
+    benchmarks = [
+        decode_cbor_canada,
+        decode_cbor_citm,
+        decode_cbor_twitter,
+        encode_cbor_canada,
+        encode_cbor_citm,
+        encode_cbor_twitter
+    ]
+);
+
 main!(
     config = LibraryBenchmarkConfig::default().tool(Dhat::default()),
     library_benchmark_groups = [
@@ -524,6 +584,7 @@ main!(
         value_ops,
         value_indexed_group,
         value_linear_group,
-        value_key_spans_group
+        value_key_spans_group,
+        cbor
     ]
 );

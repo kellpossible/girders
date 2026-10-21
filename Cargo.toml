@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["girders", "girders-json", "benches"]
+members = ["girders", "girders-json", "girders-cbor", "benches"]
 exclude = ["spikes", "bench-fixtures"]
 
 [workspace.package]

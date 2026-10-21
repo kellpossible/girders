@@ -228,6 +228,46 @@ encoding stays inline. A `dyn` serializer would help more in code that
 encodes to several writer types (each codec is compiled once per
 serializer type); this fixture encodes only to `Vec`.
 
+## CBOR (girders-cbor)
+
+The same typed models, encoded as CBOR instead of JSON. Runtime figures are
+instructions per document (Callgrind, `cbor` group). The JSON columns are
+girders' own JSON numbers from the runtime table above, for comparison.
+There is no serde CBOR baseline yet; that needs dependency research
+(`ciborium` or `minicbor`).
+
+| Document | Decode CBOR | Decode JSON | Encode CBOR | Encode JSON |
+|---|---:|---:|---:|---:|
+| canada | 43.5 M | 102.2 M | 11.8 M | 102.4 M |
+| citm | 24.0 M | 34.2 M | 4.12 M | 11.0 M |
+| twitter | 13.4 M | 16.9 M | 2.47 M | 10.4 M |
+
+- **Decoding CBOR** costs 21–57% fewer instructions than decoding JSON.
+  Numbers dominate the saving: canada's floats are read as raw bits
+  instead of parsed.
+- **Encoding CBOR** is 3–9× cheaper. No float formatting is involved:
+  canada's floats are written as 4 or 8 raw bytes.
+
+**Wire size** (bytes), written by the models:
+
+| Document | JSON | CBOR |
+|---|---:|---:|
+| canada | 1,203,993 | 611,232 |
+| citm | 500,299 | 342,373 |
+| twitter | 477,706 | 410,131 |
+
+canada's model uses `f32` coordinates, following json-benchmark, so its
+floats are written as single precision (5 bytes each).
+
+**Interoperability.** Python's `cbor2` decodes all three outputs. citm
+equals its source JSON exactly. canada differs only by the model's `f32`
+narrowing. twitter differs only where the model writes absent optional
+fields as `null`.
+
+**Cost to JSON.** The JSON serializer's new key mode (for `Value` maps
+with non-string keys) costs 0.4% (canada, twitter) to 1.0% (citm) of
+encode instructions.
+
 ## Ergonomics (from writing the twitter and citm models)
 
 - **Wide records:** the 16-element tuple cap means nesting

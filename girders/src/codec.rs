@@ -8,6 +8,7 @@ use crate::span::Spanned;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Display;
 use core::marker::PhantomData;
 
@@ -105,6 +106,34 @@ unit_codec!(
     /// `f32`; `OutOfRange` if the value doesn't fit a finite `f32`.
     F32Codec, f32
 );
+
+unit_codec!(
+    /// `Vec<u8>` as a byte string. Formats without byte strings use an
+    /// array of numbers from 0 to 255.
+    BytesCodec, bytes
+);
+
+impl Decoder for BytesCodec {
+    type Output = Vec<u8>;
+    #[inline]
+    fn decode<R: Reader + ?Sized>(&self, r: &mut R, _cx: &mut DecodeContext) -> DecodeResult<Vec<u8>, R> {
+        let mut b = Vec::new();
+        r.read_bytes(&mut b)?;
+        Ok(b)
+    }
+}
+impl Encoder for BytesCodec {
+    type Input = Vec<u8>;
+    #[inline]
+    fn encode<S: Serializer + ?Sized>(
+        &self,
+        v: &Vec<u8>,
+        s: &mut S,
+        _cx: &mut EncodeContext,
+    ) -> Result<(), S::Error> {
+        s.write_bytes(v)
+    }
+}
 
 impl Decoder for Str {
     type Output = String;
@@ -308,6 +337,51 @@ macro_rules! wide_int_codec {
 }
 wide_int_codec!(I128Codec, i128, i128);
 wide_int_codec!(U128Codec, u128, u128);
+
+// -- Tags ------------------------------------------------------------------------
+
+/// A value carrying tag number `tag` (CBOR tags, such as 1 for epoch
+/// times). Decoding requires the tag, in formats that have tags. Formats
+/// without tags skip the check on decoding and drop the tag on encoding.
+#[derive(Debug, Clone, Copy)]
+pub struct Tagged<C> {
+    tag: u64,
+    inner: C,
+}
+
+pub const fn tagged<C: Codec>(tag: u64, inner: C) -> Tagged<C> {
+    Tagged { tag, inner }
+}
+
+impl<C: Decoder> Decoder for Tagged<C> {
+    type Output = C::Output;
+    fn decode<R: Reader + ?Sized>(&self, r: &mut R, cx: &mut DecodeContext) -> DecodeResult<C::Output, R> {
+        if r.supports_tags() {
+            let at = r.here();
+            let found = r.read_tag()?;
+            if found != self.tag {
+                return Err(DecodeError::at(
+                    Problem::mismatch(alloc::format!("tag {}", self.tag), alloc::format!("tag {found}")),
+                    at,
+                ));
+            }
+        }
+        decode_child(&self.inner, r, cx)
+    }
+}
+
+impl<C: Encoder> Encoder for Tagged<C> {
+    type Input = C::Input;
+    fn encode<S: Serializer + ?Sized>(
+        &self,
+        v: &C::Input,
+        s: &mut S,
+        cx: &mut EncodeContext,
+    ) -> Result<(), S::Error> {
+        s.write_tag(self.tag)?;
+        self.inner.encode(v, s, cx)
+    }
+}
 
 // -- Option / Box / Spanned ------------------------------------------------------
 

@@ -78,3 +78,31 @@ impl girders_json::ObjectMap for Linear {
     }
 }
 
+
+#[cfg(test)]
+mod cbor {
+    //! The json-benchmark models through CBOR with the same codecs: JSON in,
+    //! CBOR out and back, and the result equals the original.
+    use crate::{canada, citm, data, twitter};
+
+    fn through_cbor<C: girders::Codec<Output: PartialEq + std::fmt::Debug>>(file: &str, codec: &C) -> (usize, usize) {
+        let json = data(file);
+        let v = girders_json::decode(&json, codec).unwrap();
+        let cbor = girders_cbor::encode(&v, codec);
+        assert_eq!(girders_cbor::decode(&cbor, codec).unwrap(), v);
+        // The dynamic tree reads the same bytes, and writes them back identically.
+        let tree = girders_cbor::decode(&cbor, &girders_cbor::value()).unwrap();
+        assert_eq!(girders_cbor::encode(&tree, &girders_cbor::value()), cbor);
+        (girders_json::encode(&v, codec).len(), cbor.len())
+    }
+
+    #[test]
+    fn models_round_trip_through_cbor() {
+        let (j, c) = through_cbor("twitter.json", &twitter::codec());
+        println!("twitter: JSON {j} bytes, CBOR {c}");
+        let (j, c) = through_cbor("citm_catalog.json", &citm::codec());
+        println!("citm: JSON {j} bytes, CBOR {c}");
+        let (j, c) = through_cbor("canada.json", &canada::codec());
+        println!("canada: JSON {j} bytes, CBOR {c}");
+    }
+}

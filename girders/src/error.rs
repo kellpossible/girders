@@ -41,6 +41,9 @@ pub enum Problem {
     DepthLimitExceeded(usize),
     /// The input source failed (an I/O error while streaming).
     Io(String),
+    /// The format can't do what the codec asked, for example read a map
+    /// key as a number from a format whose keys are always strings.
+    Unsupported(Cow<'static, str>),
     /// The available input ran out before the value was complete, and
     /// more may still arrive. Streaming drivers catch this and retry.
     /// Combinators must pass it through unchanged.
@@ -93,6 +96,7 @@ impl fmt::Display for Problem {
                 f.write_str(m)
             }
             Problem::Io(m) => write!(f, "input error: {m}"),
+            Problem::Unsupported(m) => write!(f, "not supported by this format: {m}"),
             Problem::DepthLimitExceeded(max) => write!(f, "nesting deeper than the limit of {max}"),
             Problem::Incomplete => f.write_str("unexpected end of available input"),
         }

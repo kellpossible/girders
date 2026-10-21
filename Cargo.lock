@@ -210,11 +210,21 @@ name = "girders-benches"
 version = "0.0.1"
 dependencies = [
  "girders",
+ "girders-cbor",
  "girders-json",
  "gungraun",
  "indexmap",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "girders-cbor"
+version = "0.0.1"
+dependencies = [
+ "girders",
+ "girders-json",
+ "proptest",
 ]
 
 [[package]]
