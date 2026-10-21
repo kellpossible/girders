@@ -1,14 +1,19 @@
-//! CBOR reader over a byte slice.
+//! CBOR reader over any byte [`Source`]: a slice, an `io::Read`, or
+//! chunks pushed in by the caller.
 //!
 //! Strict about well-formedness (RFC 8949 Appendix F): reserved values,
 //! misplaced break codes, bad indefinite-length strings and truncated
-//! input are all syntax errors. Text strings must be valid UTF-8.
+//! input are all syntax errors. Text strings must be valid UTF-8. When a
+//! push source runs dry before the end of input, reads fail with
+//! `Problem::Incomplete` so a streaming driver can wait and retry.
 
 use crate::bignum;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::ops::Range;
 use girders::half;
+use girders::source::{SliceSource, Source};
 use girders::{DecodeError, Kind, Number, Problem, Reader, Span};
 
 type CborError = DecodeError<Span>;
@@ -16,6 +21,10 @@ type CborResult<T> = Result<T, CborError>;
 
 /// The "break" stop code that ends indefinite-length items.
 const BREAK: u8 = 0xff;
+
+/// Discard consumed input once this many bytes are buffered and no
+/// checkpoint pins them.
+const COMPACT_AT: usize = 64 * 1024;
 
 /// An item's initial byte and argument.
 #[derive(Debug, Clone, Copy)]
@@ -60,56 +69,231 @@ enum Numeric {
     Decimal(Box<str>),
 }
 
-pub struct CborReader<'a> {
-    input: &'a [u8],
+/// Where the content of a string goes.
+enum Sink<'b> {
+    /// Validated as UTF-8 and appended.
+    Text(&'b mut String),
+    Bytes(&'b mut Vec<u8>),
+    /// Checked for well-formedness only.
+    Skip,
+}
+
+pub struct CborReader<S> {
+    src: S,
+    /// Index of the cursor in `src.buf()`.
     pos: usize,
+    /// Absolute offset of `src.buf()[0]`: the input discarded so far.
+    base: u64,
     stack: Vec<Frame>,
+    /// Outstanding checkpoints. While any exist, nothing is discarded.
+    pinned: usize,
     track: bool,
     last_key: Option<Span>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CborCheckpoint {
-    pos: usize,
+    at: u64,
     stack: Vec<Frame>,
     last_key: Option<Span>,
 }
 
-impl<'a> CborReader<'a> {
-    pub fn new(input: &'a [u8]) -> Self {
+impl<'a> CborReader<SliceSource<'a>> {
+    pub fn from_slice(input: &'a [u8]) -> Self {
+        Self::new(SliceSource::new(input))
+    }
+}
+
+impl<S: Source> CborReader<S> {
+    pub fn new(src: S) -> Self {
         CborReader {
-            input,
+            src,
             pos: 0,
+            base: 0,
             stack: Vec::new(),
+            pinned: 0,
             track: true,
             last_key: None,
         }
     }
 
-    /// Bytes consumed so far.
-    pub fn position(&self) -> usize {
-        self.pos
+    pub fn source_mut(&mut self) -> &mut S {
+        &mut self.src
     }
 
-    /// Whether all input has been consumed.
-    pub fn at_end(&self) -> bool {
-        self.pos == self.input.len()
+    /// Absolute byte offset of the cursor.
+    pub fn offset(&self) -> u64 {
+        self.base + self.pos as u64
     }
 
-    fn syntax(&self, at: usize, message: &str) -> CborError {
-        DecodeError::at(
-            Problem::Syntax(message.into()),
-            Some(Span::point(at as u64)),
-        )
+    /// Whether all input has been consumed. `Incomplete` if a push source
+    /// has no more bytes yet but hasn't finished.
+    pub fn at_end(&mut self) -> CborResult<bool> {
+        Ok(!self.ensure(1)?)
+    }
+
+    // -- byte access ---------------------------------------------------------------
+
+    /// Make `n` bytes available from the cursor; `false` if the input ends
+    /// first.
+    #[inline]
+    fn ensure(&mut self, n: usize) -> CborResult<bool> {
+        if self.src.buf().len() - self.pos >= n {
+            Ok(true)
+        } else {
+            self.ensure_slow(n)
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn ensure_slow(&mut self, n: usize) -> CborResult<bool> {
+        loop {
+            if self.src.buf().len() - self.pos >= n {
+                return Ok(true);
+            }
+            if self.src.is_eof() {
+                return Ok(false);
+            }
+            match self.src.fill() {
+                Ok(true) => continue,
+                Ok(false) if self.src.is_eof() => return Ok(false),
+                Ok(false) => {
+                    return Err(DecodeError::at(
+                        Problem::Incomplete,
+                        Some(Span::point(self.offset())),
+                    ));
+                }
+                Err(message) => {
+                    return Err(DecodeError::at(
+                        Problem::Io(message),
+                        Some(Span::point(self.offset())),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Make `n` bytes available, or fail with "unexpected end of input".
+    fn need(&mut self, n: usize) -> CborResult<()> {
+        if self.ensure(n)? {
+            Ok(())
+        } else {
+            Err(self.end_of_input())
+        }
+    }
+
+    fn peek_byte(&mut self) -> CborResult<Option<u8>> {
+        Ok(if self.ensure(1)? {
+            Some(self.src.buf()[self.pos])
+        } else {
+            None
+        })
+    }
+
+    /// Drop consumed input, between items only.
+    fn compact(&mut self) {
+        if S::COMPACTS && self.pos >= COMPACT_AT && self.pinned == 0 {
+            self.src.discard(self.pos);
+            self.base += self.pos as u64;
+            self.pos = 0;
+        }
+    }
+
+    /// Move the cursor to absolute offset `at` (not before the buffer).
+    fn seek(&mut self, at: u64) {
+        self.pos = (at - self.base) as usize;
+    }
+
+    // -- errors --------------------------------------------------------------------
+
+    fn syntax(&self, at: u64, message: &str) -> CborError {
+        DecodeError::at(Problem::Syntax(message.into()), Some(Span::point(at)))
     }
 
     fn end_of_input(&self) -> CborError {
-        self.syntax(self.input.len(), "unexpected end of input")
+        let end = self.base + self.src.buf().len() as u64;
+        self.syntax(end, "unexpected end of input")
     }
 
-    fn peek_head(&self) -> CborResult<Head> {
-        let at = self.pos;
-        let Some(&initial) = self.input.get(at) else {
+    fn kind_of(&self, head: Head) -> CborResult<Kind> {
+        Ok(match head.major {
+            0 | 1 => Kind::Number,
+            2 => Kind::Bytes,
+            3 => Kind::String,
+            4 => Kind::Array,
+            5 => Kind::Object,
+            6 => Kind::Tag,
+            _ => match head.info {
+                20 | 21 => Kind::Bool,
+                22 => Kind::Null,
+                25..=27 => Kind::Number,
+                31 => return Err(self.syntax(self.offset(), "unexpected break stop code")),
+                _ => Kind::Simple,
+            },
+        })
+    }
+
+    /// `TypeMismatch` against the item at the cursor (a syntax error if it
+    /// is a break code).
+    fn mismatch(&self, expected: &'static str, head: Head) -> CborError {
+        match self.kind_of(head) {
+            Ok(kind) => DecodeError::at(
+                Problem::mismatch(expected, kind.name()),
+                Some(Span::point(self.offset())),
+            ),
+            Err(e) => e,
+        }
+    }
+
+    fn out_of_range(&self, at: u64, target: &str) -> CborError {
+        DecodeError::at(
+            Problem::OutOfRange(alloc::format!("number does not fit {target}")),
+            Some(Span::new(at, self.offset())),
+        )
+    }
+
+    // -- items ---------------------------------------------------------------------
+
+    /// The head at the cursor, without consuming it.
+    #[inline]
+    fn peek_head(&mut self) -> CborResult<Head> {
+        self.compact();
+        // Fast path: the whole head is already buffered and has no
+        // reserved values.
+        let buf = self.src.buf();
+        if let Some(&initial) = buf.get(self.pos) {
+            let major = initial >> 5;
+            let info = initial & 0x1f;
+            if info < 24 {
+                return Ok(Head {
+                    major,
+                    info,
+                    arg: info as u64,
+                    len: 1,
+                });
+            }
+            if info < 28 && !(major == 7 && info == 24) {
+                let n = 1usize << (info - 24);
+                if let Some(bytes) = buf.get(self.pos + 1..self.pos + 1 + n) {
+                    let arg = bytes.iter().fold(0u64, |acc, &b| (acc << 8) | b as u64);
+                    return Ok(Head {
+                        major,
+                        info,
+                        arg,
+                        len: 1 + n,
+                    });
+                }
+            }
+        }
+        self.peek_head_slow()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn peek_head_slow(&mut self) -> CborResult<Head> {
+        let at = self.offset();
+        let Some(initial) = self.peek_byte()? else {
             return Err(self.end_of_input());
         };
         let major = initial >> 5;
@@ -118,10 +302,8 @@ impl<'a> CborReader<'a> {
             0..=23 => (info as u64, 1),
             24..=27 => {
                 let n = 1usize << (info - 24);
-                let bytes = self
-                    .input
-                    .get(at + 1..at + 1 + n)
-                    .ok_or_else(|| self.end_of_input())?;
+                self.need(1 + n)?;
+                let bytes = &self.src.buf()[self.pos + 1..self.pos + 1 + n];
                 (
                     bytes.iter().fold(0u64, |acc, &b| (acc << 8) | b as u64),
                     1 + n,
@@ -146,62 +328,39 @@ impl<'a> CborReader<'a> {
         })
     }
 
-    fn kind_of(&self, head: Head) -> CborResult<Kind> {
-        Ok(match head.major {
-            0 | 1 => Kind::Number,
-            2 => Kind::Bytes,
-            3 => Kind::String,
-            4 => Kind::Array,
-            5 => Kind::Object,
-            6 => Kind::Tag,
-            _ => match head.info {
-                20 | 21 => Kind::Bool,
-                22 => Kind::Null,
-                25..=27 => Kind::Number,
-                31 => return Err(self.syntax(self.pos, "unexpected break stop code")),
-                _ => Kind::Simple,
-            },
-        })
-    }
-
-    /// `TypeMismatch` against the item at the current position (a syntax
-    /// error if it is a break code).
-    fn mismatch(&self, expected: &'static str, head: Head) -> CborError {
-        match self.kind_of(head) {
-            Ok(kind) => DecodeError::at(
-                Problem::mismatch(expected, kind.name()),
-                Some(Span::point(self.pos as u64)),
-            ),
-            Err(e) => e,
-        }
-    }
-
-    fn out_of_range(&self, at: usize, target: &str) -> CborError {
-        DecodeError::at(
-            Problem::OutOfRange(alloc::format!("number does not fit {target}")),
-            Some(Span::new(at as u64, self.pos as u64)),
-        )
-    }
-
-    /// Consume `n` bytes of string content.
-    fn take(&mut self, n: u64) -> CborResult<&'a [u8]> {
-        let available = self.input.len() - self.pos;
-        let n = usize::try_from(n)
-            .ok()
-            .filter(|&n| n <= available)
-            .ok_or_else(|| self.end_of_input())?;
-        let bytes = &self.input[self.pos..self.pos + n];
+    /// Consume `n` bytes of string content, returning where they are in
+    /// the buffer.
+    fn take(&mut self, n: u64) -> CborResult<Range<usize>> {
+        let n = usize::try_from(n).map_err(|_| self.end_of_input())?;
+        self.need(n)?;
+        let range = self.pos..self.pos + n;
         self.pos += n;
-        Ok(bytes)
+        Ok(range)
+    }
+
+    fn deliver(&self, range: Range<usize>, sink: &mut Sink<'_>) -> CborResult<()> {
+        let bytes = &self.src.buf()[range.clone()];
+        match sink {
+            Sink::Text(out) => match core::str::from_utf8(bytes) {
+                Ok(text) => out.push_str(text),
+                Err(e) => {
+                    let at = self.base + (range.start + e.valid_up_to()) as u64;
+                    return Err(self.syntax(at, "invalid UTF-8 in a text string"));
+                }
+            },
+            Sink::Bytes(out) => out.extend_from_slice(bytes),
+            Sink::Skip => {}
+        }
+        Ok(())
     }
 
     /// Read a definite or indefinite string of `major` type (2 bytes, 3
-    /// text), handing each chunk to `chunk`.
+    /// text) into `sink`.
     fn read_chunks(
         &mut self,
         major: u8,
         expected: &'static str,
-        mut chunk: impl FnMut(&Self, usize, &'a [u8]) -> CborResult<()>,
+        mut sink: Sink<'_>,
     ) -> CborResult<()> {
         let head = self.peek_head()?;
         if head.major != major {
@@ -209,14 +368,13 @@ impl<'a> CborReader<'a> {
         }
         self.pos += head.len;
         if !head.indefinite() {
-            let at = self.pos;
-            let bytes = self.take(head.arg)?;
-            return chunk(self, at, bytes);
+            let range = self.take(head.arg)?;
+            return self.deliver(range, &mut sink);
         }
         loop {
-            match self.input.get(self.pos) {
+            match self.peek_byte()? {
                 None => return Err(self.end_of_input()),
-                Some(&BREAK) => {
+                Some(BREAK) => {
                     self.pos += 1;
                     return Ok(());
                 }
@@ -225,14 +383,13 @@ impl<'a> CborReader<'a> {
             let part = self.peek_head()?;
             if part.major != major || part.indefinite() {
                 return Err(self.syntax(
-                    self.pos,
+                    self.offset(),
                     "indefinite-length string chunks must be definite strings of the same type",
                 ));
             }
             self.pos += part.len;
-            let at = self.pos;
-            let bytes = self.take(part.arg)?;
-            chunk(self, at, bytes)?;
+            let range = self.take(part.arg)?;
+            self.deliver(range, &mut sink)?;
         }
     }
 
@@ -247,17 +404,14 @@ impl<'a> CborReader<'a> {
             (6, 2) | (6, 3) => {
                 self.pos += head.len;
                 let mut magnitude = Vec::new();
-                self.read_chunks(2, "bignum byte string", |_, _, b| {
-                    magnitude.extend_from_slice(b);
-                    Ok(())
-                })?;
+                self.read_chunks(2, "bignum byte string", Sink::Bytes(&mut magnitude))?;
                 return Ok(Numeric::Big {
                     negative: head.arg == 3,
                     magnitude,
                 });
             }
             (6, 4) => {
-                let at = self.pos;
+                let at = self.offset();
                 self.pos += head.len;
                 let pair = self.peek_head()?;
                 if pair.major != 4 || pair.indefinite() || pair.arg != 2 {
@@ -265,12 +419,12 @@ impl<'a> CborReader<'a> {
                 }
                 self.pos += pair.len;
                 let exponent = match self.read_numeric("integer")? {
-                    n @ (Numeric::Unsigned(_) | Numeric::Negative(_)) => Self::text_of(n)?,
+                    n @ (Numeric::Unsigned(_) | Numeric::Negative(_)) => Self::text_of(n),
                     _ => return Err(self.syntax(at, "a decimal fraction's exponent is an integer")),
                 };
                 let mantissa = match self.read_numeric("integer")? {
                     n @ (Numeric::Unsigned(_) | Numeric::Negative(_) | Numeric::Big { .. }) => {
-                        Self::text_of(n)?
+                        Self::text_of(n)
                     }
                     _ => return Err(self.syntax(at, "a decimal fraction's mantissa is an integer")),
                 };
@@ -287,9 +441,9 @@ impl<'a> CborReader<'a> {
         Ok(numeric)
     }
 
-    /// Exact decimal text. `None` for NaN and the infinities.
-    fn text_of(n: Numeric) -> CborResult<String> {
-        Ok(match n {
+    /// Exact decimal text (for floats, the shortest round-trip form).
+    fn text_of(n: Numeric) -> String {
+        match n {
             Numeric::Unsigned(v) => v.to_string(),
             Numeric::Negative(v) => alloc::format!("-{}", v as u128 + 1),
             Numeric::Big {
@@ -302,7 +456,7 @@ impl<'a> CborReader<'a> {
             } => alloc::format!("-{}", bignum::to_decimal(&bignum::add_one(&magnitude))),
             Numeric::Float(f) => alloc::format!("{f:?}"),
             Numeric::Decimal(text) => text.into(),
-        })
+        }
     }
 
     /// The integer value, if it fits `i128`.
@@ -322,10 +476,14 @@ impl<'a> CborReader<'a> {
     }
 
     fn read_int<T: TryFrom<i128>>(&mut self, target: &'static str) -> CborResult<T> {
-        let at = self.pos;
-        let n = self.read_numeric("int")?;
+        let at = self.offset();
+        // Pinned, so `at` stays in the buffer for the rewind below.
+        self.pinned += 1;
+        let n = self.read_numeric("int");
+        self.pinned -= 1;
+        let n = n?;
         if matches!(n, Numeric::Float(_) | Numeric::Decimal(_)) {
-            self.pos = at;
+            self.seek(at);
             let found = if let Numeric::Float(_) = n {
                 "float"
             } else {
@@ -333,7 +491,7 @@ impl<'a> CborReader<'a> {
             };
             return Err(DecodeError::at(
                 Problem::mismatch("int", found),
-                Some(Span::point(at as u64)),
+                Some(Span::point(at)),
             ));
         }
         Self::integer(&n)
@@ -357,46 +515,51 @@ impl<'a> CborReader<'a> {
 
     /// Whether the open container has another item (or entry).
     fn has_next(&mut self) -> CborResult<bool> {
-        match self.stack.last_mut() {
+        match self.stack.last() {
             Some(Frame::Definite(0)) => Ok(false),
-            Some(Frame::Definite(n)) => {
-                *n -= 1;
+            Some(Frame::Definite(_)) => {
+                if let Some(Frame::Definite(n)) = self.stack.last_mut() {
+                    *n -= 1;
+                }
                 Ok(true)
             }
-            Some(Frame::Indefinite) => match self.input.get(self.pos) {
+            Some(Frame::Indefinite) => match self.peek_byte()? {
                 None => Err(self.end_of_input()),
-                Some(&BREAK) => Ok(false),
+                Some(BREAK) => Ok(false),
                 Some(_) => Ok(true),
             },
-            None => Err(self.syntax(self.pos, "no array or map is open")),
+            None => Err(self.syntax(self.offset(), "no array or map is open")),
         }
     }
 
     fn close(&mut self, what: &str) -> CborResult<()> {
-        match self.stack.pop() {
-            Some(Frame::Definite(0)) => Ok(()),
+        match self.stack.last() {
+            Some(Frame::Definite(0)) => {}
             Some(Frame::Definite(_)) => {
-                Err(self.syntax(self.pos, &alloc::format!("{what} has more items")))
+                return Err(self.syntax(self.offset(), &alloc::format!("{what} has more items")));
             }
-            Some(Frame::Indefinite) => match self.input.get(self.pos) {
-                Some(&BREAK) => {
-                    self.pos += 1;
-                    Ok(())
+            Some(Frame::Indefinite) => match self.peek_byte()? {
+                Some(BREAK) => self.pos += 1,
+                None => return Err(self.end_of_input()),
+                Some(_) => {
+                    return Err(
+                        self.syntax(self.offset(), &alloc::format!("{what} has more items"))
+                    );
                 }
-                None => Err(self.end_of_input()),
-                Some(_) => Err(self.syntax(self.pos, &alloc::format!("{what} has more items"))),
             },
-            None => Err(self.syntax(self.pos, "no array or map is open")),
+            None => return Err(self.syntax(self.offset(), "no array or map is open")),
         }
+        self.stack.pop();
+        Ok(())
     }
 }
 
-impl Reader for CborReader<'_> {
+impl<S: Source> Reader for CborReader<S> {
     type Location = Span;
     type Checkpoint = CborCheckpoint;
 
     fn peek_kind(&mut self) -> CborResult<Kind> {
-        if self.at_end() {
+        if !self.ensure(1)? {
             return Ok(Kind::Eof);
         }
         let head = self.peek_head()?;
@@ -404,11 +567,11 @@ impl Reader for CborReader<'_> {
     }
 
     fn here(&mut self) -> Option<Span> {
-        self.track.then(|| Span::point(self.pos as u64))
+        self.track.then(|| Span::point(self.offset()))
     }
 
     fn since(&mut self, start: &Span) -> Span {
-        Span::new(start.start(), self.pos as u64)
+        Span::new(start.start(), self.offset())
     }
 
     fn byte_span(&self, location: &Span) -> Option<Span> {
@@ -424,7 +587,7 @@ impl Reader for CborReader<'_> {
     }
 
     fn read_bool(&mut self) -> CborResult<bool> {
-        match self.input.get(self.pos) {
+        match self.peek_byte()? {
             Some(0xf4) => {
                 self.pos += 1;
                 Ok(false)
@@ -433,33 +596,29 @@ impl Reader for CborReader<'_> {
                 self.pos += 1;
                 Ok(true)
             }
-            _ => Err(self.mismatch("bool", self.peek_head()?)),
+            _ => {
+                let head = self.peek_head()?;
+                Err(self.mismatch("bool", head))
+            }
         }
     }
 
     fn read_null(&mut self) -> CborResult<()> {
-        if self.input.get(self.pos) == Some(&0xf6) {
+        if self.peek_byte()? == Some(0xf6) {
             self.pos += 1;
             Ok(())
         } else {
-            Err(self.mismatch("null", self.peek_head()?))
+            let head = self.peek_head()?;
+            Err(self.mismatch("null", head))
         }
     }
 
     fn read_str(&mut self, buf: &mut String) -> CborResult<()> {
-        self.read_chunks(3, "string", |r, at, bytes| {
-            let text = core::str::from_utf8(bytes)
-                .map_err(|e| r.syntax(at + e.valid_up_to(), "invalid UTF-8 in a text string"))?;
-            buf.push_str(text);
-            Ok(())
-        })
+        self.read_chunks(3, "string", Sink::Text(buf))
     }
 
     fn read_bytes(&mut self, buf: &mut Vec<u8>) -> CborResult<()> {
-        self.read_chunks(2, "bytes", |_, _, bytes| {
-            buf.extend_from_slice(bytes);
-            Ok(())
-        })
+        self.read_chunks(2, "bytes", Sink::Bytes(buf))
     }
 
     fn read_i64(&mut self) -> CborResult<i64> {
@@ -471,15 +630,14 @@ impl Reader for CborReader<'_> {
     }
 
     fn read_f64(&mut self) -> CborResult<f64> {
-        let at = self.pos;
+        let at = self.offset();
         match self.read_numeric("float")? {
             Numeric::Float(f) => Ok(f),
             Numeric::Unsigned(v) => Ok(v as f64),
             Numeric::Negative(v) => Ok(-(v as f64) - 1.0),
-            n => {
-                let text = Self::text_of(n)?;
-                text.parse().map_err(|_| self.out_of_range(at, "f64"))
-            }
+            n => Self::text_of(n)
+                .parse()
+                .map_err(|_| self.out_of_range(at, "f64")),
         }
     }
 
@@ -497,7 +655,7 @@ impl Reader for CborReader<'_> {
             }
         }
         let decimal = matches!(n, Numeric::Decimal(_));
-        let text = Self::text_of(n)?;
+        let text = Self::text_of(n);
         if decimal {
             Ok(Number::F64(text.parse().unwrap_or(f64::NAN)))
         } else {
@@ -506,14 +664,14 @@ impl Reader for CborReader<'_> {
     }
 
     fn read_number_text(&mut self, buf: &mut String) -> CborResult<()> {
-        let at = self.pos;
+        let at = self.offset();
         let n = self.read_numeric("number")?;
         if let Numeric::Float(f) = n
             && !f.is_finite()
         {
             return Err(self.out_of_range(at, "number text"));
         }
-        buf.push_str(&Self::text_of(n)?);
+        buf.push_str(&Self::text_of(n));
         Ok(())
     }
 
@@ -559,13 +717,13 @@ impl Reader for CborReader<'_> {
         if !self.has_next()? {
             return Ok(false);
         }
-        let start = self.pos as u64;
         let head = self.peek_head()?;
         if head.major != 3 {
             return Err(self.mismatch("string key", head));
         }
+        let start = self.offset();
         self.read_str(buf)?;
-        self.last_key = Some(Span::new(start, self.pos as u64));
+        self.last_key = Some(Span::new(start, self.offset()));
         Ok(true)
     }
 
@@ -599,12 +757,13 @@ impl Reader for CborReader<'_> {
                 }
                 Some(n) => *n -= 1,
                 None => {
-                    match self.input.get(self.pos) {
+                    let (map, in_entry) = (level.map, level.in_entry);
+                    match self.peek_byte()? {
                         None => return Err(self.end_of_input()),
-                        Some(&BREAK) => {
-                            if level.map && level.in_entry {
+                        Some(BREAK) => {
+                            if map && in_entry {
                                 return Err(
-                                    self.syntax(self.pos, "break in a map's value position")
+                                    self.syntax(self.offset(), "break in a map's value position")
                                 );
                             }
                             self.pos += 1;
@@ -613,16 +772,18 @@ impl Reader for CborReader<'_> {
                         }
                         Some(_) => {}
                     }
-                    level.in_entry = level.map && !level.in_entry;
+                    if let Some(level) = levels.last_mut() {
+                        level.in_entry = level.map && !level.in_entry;
+                    }
                 }
             }
             let head = self.peek_head()?;
             if head.is_break() {
-                return Err(self.syntax(self.pos, "unexpected break stop code"));
+                return Err(self.syntax(self.offset(), "unexpected break stop code"));
             }
             let opened = match head.major {
                 2 | 3 => {
-                    self.read_chunks(head.major, "string", |_, _, _| Ok(()))?;
+                    self.read_chunks(head.major, "string", Sink::Skip)?;
                     None
                 }
                 4..=6 => {
@@ -652,18 +813,21 @@ impl Reader for CborReader<'_> {
     }
 
     fn checkpoint(&mut self) -> CborCheckpoint {
+        self.pinned += 1;
         CborCheckpoint {
-            pos: self.pos,
+            at: self.offset(),
             stack: self.stack.clone(),
             last_key: self.last_key,
         }
     }
 
     fn rewind(&mut self, cp: &CborCheckpoint) {
-        self.pos = cp.pos;
+        self.seek(cp.at);
         self.stack.clone_from(&cp.stack);
         self.last_key = cp.last_key;
     }
 
-    fn release(&mut self, _cp: CborCheckpoint) {}
+    fn release(&mut self, _cp: CborCheckpoint) {
+        self.pinned -= 1;
+    }
 }

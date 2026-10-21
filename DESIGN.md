@@ -120,13 +120,14 @@ girder-rs/                    (directory name unchanged)
       record.rs               applicative record builder, tuple impls (macro_rules!)
       union.rs                tagged_union, adjacent_union, one_of
       versioned.rs            versioned codec
+      source.rs               byte sources shared by JSON and CBOR: SliceSource, ReadSource<R>, PushSource
       schema.rs               SchemaNode, SchemaCx, refinements
   girders-cbor/               CBOR format (§10), published as `girders-cbor`
   girders-json/               JSON format, published as `girders-json`
     src/
       lib.rs                  decode/encode/parse entry points
       cursor.rs               strict RFC 8259 byte cursor
-      source.rs               SliceSource, ReadSource<R>, push feeder
+      source.rs               re-exports girders::source
       reader.rs               impl Reader for JsonReader<S>
       serializer.rs           compact / pretty, over io::Write or Vec<u8>
       value.rs                Value<M>, ObjectMap trait, OrderedMap
@@ -252,6 +253,8 @@ cannot suspend partway through.
   for callers with no blocking reader, such as an async socket handing
   over chunks.
 - Both use the same `JsonReader<S: Source>`. Only the `Source` differs.
+  The sources live in `girders::source`, and the CBOR reader uses them too
+  (§10.2).
 - `Problem::Incomplete` stays in the error model as the signal between a
   source and the push driver. Combinators pass it through unchanged and
   must never treat it as a failed branch (`one_of`) or a missing field.
@@ -850,8 +853,17 @@ The JSON serializer's key mode costs up to 1% of encode instructions
 
 ### 10.2 Reader
 
-- Over a byte slice. Strict well-formedness: every RFC 8949 Appendix F
-  example is rejected.
+- `CborReader<S: Source>`, over the same sources as JSON:
+  - a slice (`decode`);
+  - an `io::Read` (`from_reader`);
+  - pushed chunks (`StreamDecoder`, which decodes a CBOR sequence per
+    RFC 8742, like JSON's NDJSON decoder).
+
+  Consumed input is discarded at item boundaries once 64 KiB is buffered
+  and no checkpoint pins it. Spans stay absolute. A fast path for heads
+  already in the buffer keeps slice decoding within about 1% of the
+  slice-only reader.
+- Strict well-formedness: every RFC 8949 Appendix F example is rejected.
 - Text must be valid UTF-8. Indefinite-length strings must be made of
   definite chunks of the same type.
 - Records read text keys; any other key type is a type mismatch.
@@ -916,12 +928,17 @@ The JSON serializer's key mode costs up to 1% of encode instructions
   - depth limits and truncation.
 - Property tests: arbitrary `Value`s round-trip, and arbitrary bytes
   never panic.
+- Streaming:
+  - `io::Read` sources, including one that returns a byte at a time;
+  - inputs several times the compaction threshold, with absolute error
+    offsets after compaction, and accumulated errors rewound across it;
+  - I/O errors;
+  - CBOR sequences split at every chunk size, and under random chunking.
 - The three json-benchmark models round-trip JSON → CBOR → model, and
   Python's `cbor2` reads the output as the same data.
 
 ### 10.7 Not yet
 
-- Streaming sources (`io::Read`, push).
 - Multi-dimensional typed arrays (RFC 8746 tags 40 and 1040).
 - Typed map keys (N3).
 

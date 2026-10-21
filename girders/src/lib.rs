@@ -28,6 +28,7 @@ pub mod reader;
 pub mod record;
 pub mod recursive;
 pub mod serializer;
+pub mod source;
 pub mod span;
 pub mod union;
 pub mod versioned;

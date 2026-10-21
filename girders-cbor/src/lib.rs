@@ -23,13 +23,18 @@ extern crate alloc;
 mod bignum;
 pub mod reader;
 pub mod serializer;
+pub mod stream;
 pub mod value;
 
 pub use reader::{CborCheckpoint, CborReader};
 pub use serializer::{CborSerializer, EncodeOptions, Floats};
+pub use stream::StreamDecoder;
 pub use value::{Value, ValueCodec, value};
 
 use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use girders::source::ReadSource;
+use girders::source::{SliceSource, Source};
 use girders::{
     DecodeContext, DecodeError, DecodeOptions, Decoder, EncodeContext, Encoder, Problem, Reader,
     Span,
@@ -51,17 +56,52 @@ pub fn decode_with<C: Decoder + ?Sized>(
     codec: &C,
     options: DecodeOptions,
 ) -> Result<C::Output, Error> {
-    let mut r = CborReader::new(input);
+    decode_source(SliceSource::new(input), codec, options)
+}
+
+/// Decode one data item from any source; trailing bytes are an error.
+///
+/// The reader is passed to the codec as a trait object ([`DynReader`]),
+/// so its code exists once however many codecs use it.
+pub fn decode_source<S: Source, C: Decoder + ?Sized>(
+    src: S,
+    codec: &C,
+    options: DecodeOptions,
+) -> Result<C::Output, Error> {
+    let mut r = CborReader::new(src);
     r.set_track_locations(options.track_locations);
     let mut cx = DecodeContext::new(options);
     let v = codec.decode::<DynReader<'_>>(&mut r, &mut cx)?;
-    if !r.at_end() {
+    if !r.at_end()? {
         return Err(DecodeError::at(
             Problem::Syntax("trailing bytes after the data item".into()),
-            Some(Span::point(r.position() as u64)),
+            Some(Span::point(r.offset())),
         ));
     }
     Ok(v)
+}
+
+/// Decode from any `std::io::Read`, buffered internally.
+#[cfg(feature = "std")]
+pub fn from_reader<R: std::io::Read, C: Decoder + ?Sized>(
+    input: R,
+    codec: &C,
+) -> Result<C::Output, Error> {
+    decode_source(ReadSource::new(input), codec, DecodeOptions::new())
+}
+
+#[cfg(feature = "std")]
+pub fn from_reader_with<R: std::io::Read, C: Decoder + ?Sized>(
+    input: R,
+    codec: &C,
+    options: DecodeOptions,
+    chunk_size: usize,
+) -> Result<C::Output, Error> {
+    decode_source(
+        ReadSource::with_chunk_size(input, chunk_size),
+        codec,
+        options,
+    )
 }
 
 /// Encode with preferred serialization.
