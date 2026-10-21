@@ -28,7 +28,7 @@ fn integer_keys_are_quoted_in_json_and_native_in_cbor() {
     let codec = btree_map(u32(), string());
     assert_eq!(json(&codec, r#"{"2":"b","1":"a"}"#).unwrap(), names());
     assert_eq!(
-        girders_json::encode(&names(), &codec),
+        girders_json::encode(&names(), &codec).unwrap(),
         r#"{"1":"a","2":"b"}"#
     );
 
@@ -59,7 +59,7 @@ fn json_keys_follow_the_number_grammar_like_serde_json() {
 
     let float_keys = btree_map(f64_key(), u8());
     assert_eq!(
-        girders_json::encode(&BTreeMap::from([(Ordered(1.5), 1)]), &float_keys),
+        girders_json::encode(&BTreeMap::from([(Ordered(1.5), 1)]), &float_keys).unwrap(),
         r#"{"1.5":1}"#
     );
     assert!(
@@ -91,7 +91,10 @@ fn f64_key() -> impl Codec<Output = Ordered> {
 fn bool_and_enum_keys() {
     let flags = btree_map(bool(), u8());
     let v = BTreeMap::from([(false, 0), (true, 1)]);
-    assert_eq!(girders_json::encode(&v, &flags), r#"{"false":0,"true":1}"#);
+    assert_eq!(
+        girders_json::encode(&v, &flags).unwrap(),
+        r#"{"false":0,"true":1}"#
+    );
     assert_eq!(json(&flags, r#"{"true":1,"false":0}"#).unwrap(), v);
     assert_eq!(
         girders_cbor::decode(&girders_cbor::encode(&v, &flags), &flags).unwrap(),
@@ -108,7 +111,10 @@ fn bool_and_enum_keys() {
         u8(),
     );
     let v = BTreeMap::from([(Color::Red, 1), (Color::Green, 2)]);
-    assert_eq!(girders_json::encode(&v, &colors), r#"{"red":1,"green":2}"#);
+    assert_eq!(
+        girders_json::encode(&v, &colors).unwrap(),
+        r#"{"red":1,"green":2}"#
+    );
     assert_eq!(json(&colors, r#"{"green":2,"red":1}"#).unwrap(), v);
     assert!(json(&colors, r#"{"blue":3}"#).is_err());
 }
@@ -120,7 +126,7 @@ fn composite_keys_work_in_cbor_only() {
     let cbor = girders_cbor::encode(&v, &codec);
     assert_eq!(cbor, hex("a1 82 01 02 6178"));
     assert_eq!(girders_cbor::decode(&cbor, &codec).unwrap(), v);
-    assert!(girders_json::try_encode(&v, &codec, girders_json::Style::Compact).is_err());
+    assert!(girders_json::encode(&v, &codec).is_err());
     let err = json(&codec, r#"{"1,2":"x"}"#).unwrap_err();
     assert!(err.to_string().contains("expected array"), "{err}");
 }
@@ -181,7 +187,7 @@ fn array_lengths_are_inferred_and_exact() {
     };
     let text = r#"{"rgb":[1,2,3],"position":[0.5,-1.0]}"#;
     assert_eq!(json(&pixel(), text).unwrap(), p);
-    assert_eq!(girders_json::encode(&p, &pixel()), text);
+    assert_eq!(girders_json::encode(&p, &pixel()).unwrap(), text);
     assert_eq!(
         girders_cbor::decode(&girders_cbor::encode(&p, &pixel()), &pixel()).unwrap(),
         p
@@ -230,7 +236,7 @@ fn array_element_errors_accumulate_with_their_index() {
 fn stringified_numbers() {
     let id = stringified(u64());
     assert_eq!(
-        girders_json::encode(&u64::MAX, &id),
+        girders_json::encode(&u64::MAX, &id).unwrap(),
         r#""18446744073709551615""#
     );
     assert_eq!(json(&id, r#""18446744073709551615""#).unwrap(), u64::MAX);
@@ -247,7 +253,7 @@ fn stringified_numbers() {
         i128::MIN
     );
     let ratio = stringified(f64());
-    assert_eq!(girders_json::encode(&f64::NAN, &ratio), r#""NaN""#);
+    assert_eq!(girders_json::encode(&f64::NAN, &ratio).unwrap(), r#""NaN""#);
     assert!(json(&ratio, r#""Infinity""#).unwrap().is_infinite());
     assert_eq!(json(&ratio, r#""1e3""#).unwrap(), 1000.0);
 }

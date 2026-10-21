@@ -10,9 +10,9 @@ use girders_json::decode as dec;
 pub fn run(kind: &str, json: &str) -> usize {
     #[cfg(not(feature = "decode-only"))]
     return match kind {
-        "twitter" => girders_json::encode(&dec(json, &twitter::codec()).unwrap(), &twitter::codec()).len(),
-        "citm" => girders_json::encode(&dec(json, &citm::codec()).unwrap(), &citm::codec()).len(),
-        _ => girders_json::encode(&dec(json, &canada::codec()).unwrap(), &canada::codec()).len(),
+        "twitter" => girders_json::encode(&dec(json, &twitter::codec()).unwrap(), &twitter::codec()).unwrap().len(),
+        "citm" => girders_json::encode(&dec(json, &citm::codec()).unwrap(), &citm::codec()).unwrap().len(),
+        _ => girders_json::encode(&dec(json, &canada::codec()).unwrap(), &canada::codec()).unwrap().len(),
     };
     #[cfg(feature = "decode-only")]
     return match kind {

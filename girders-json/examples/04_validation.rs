@@ -43,7 +43,7 @@ pub fn port_codec() -> impl Codec<Output = i64> {
 }
 
 pub fn main() {
-    let json = girders_json::encode(&UserId("u_1".into()), &user_id_codec());
+    let json = girders_json::encode(&UserId("u_1".into()), &user_id_codec()).unwrap();
     assert_eq!(json, r#""u_1""#);
     assert_eq!(
         girders_json::decode(&json, &user_id_codec()).unwrap(),

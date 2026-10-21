@@ -23,7 +23,7 @@ pub fn user_codec() -> impl Codec<Output = User> {
     .build(|(id, age, nickname)| User { id, age, nickname })
 }
 
-pub fn to_json(user: &User) -> String {
+pub fn to_json(user: &User) -> Result<String, girders_json::EncodeError> {
     girders_json::encode(user, &user_codec())
 }
 
@@ -44,14 +44,15 @@ pub fn main() {
             nickname: None,
         },
     ] {
-        assert_eq!(from_json(&to_json(&user)).unwrap(), user);
+        assert_eq!(from_json(&to_json(&user).unwrap()).unwrap(), user);
     }
     assert_eq!(
         to_json(&User {
             id: "u_3".into(),
             age: 7,
             nickname: Some("bo".into())
-        }),
+        })
+        .unwrap(),
         r#"{"id":"u_3","age":7,"nickname":"bo"}"#
     );
     assert_eq!(
@@ -59,7 +60,8 @@ pub fn main() {
             id: "u_4".into(),
             age: 8,
             nickname: None
-        }),
+        })
+        .unwrap(),
         r#"{"id":"u_4","age":8,"nickname":null}"#
     );
     assert_eq!(

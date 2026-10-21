@@ -84,6 +84,11 @@ fn decode_value<R: Reader + ?Sized>(
             Number::BigInt(text) => Value::Integer(text.parse().map_err(|_| {
                 DecodeError::at(Problem::OutOfRange("integer beyond i128".into()), r.here())
             })?),
+            // Kinds of number a future format may add: keep the value.
+            other => match other.as_f64() {
+                Some(f) => Value::Float(f),
+                None => return Err(girders::reader::mismatch(r, "number")),
+            },
         },
         Kind::Bytes => {
             let mut b = Vec::new();
@@ -149,7 +154,8 @@ fn decode_value<R: Reader + ?Sized>(
             23 => Value::Undefined,
             n => Value::Simple(n),
         },
-        Kind::Eof => return Err(girders::reader::mismatch(r, "value")),
+        // End of input, or a kind of value a future format may add.
+        _ => return Err(girders::reader::mismatch(r, "value")),
     })
 }
 

@@ -69,17 +69,17 @@ fn arb_rec() -> impl Strategy<Value = Rec> {
 proptest! {
     #[test]
     fn value_round_trip(v in arb_value()) {
-        let json = girders_json::encode(&v, &value());
+        let json = girders_json::encode(&v, &value()).unwrap();
         let back: Value = girders_json::parse(&json).unwrap();
         prop_assert_eq!(back.without_spans(), v.clone());
-        let pretty = girders_json::encode_pretty(&v, &value(), "  ");
+        let pretty = girders_json::encode_with(&v, &value(), girders_json::EncodeOptions::new().pretty("  ")).unwrap();
         let back: Value = girders_json::parse(&pretty).unwrap();
         prop_assert_eq!(back.without_spans(), v);
     }
 
     #[test]
     fn record_round_trip(r in arb_rec()) {
-        let json = girders_json::encode(&r, &rec());
+        let json = girders_json::encode(&r, &rec()).unwrap();
         prop_assert_eq!(girders_json::decode(&json, &rec()).unwrap(), r);
     }
 
@@ -87,7 +87,7 @@ proptest! {
     /// streaming paths.
     #[test]
     fn streaming_equals_slice(v in arb_value(), chunk in 1usize..40) {
-        let json = girders_json::encode_pretty(&v, &value(), " ");
+        let json = girders_json::encode_with(&v, &value(), girders_json::EncodeOptions::new().pretty(" ")).unwrap();
         let a = girders_json::parse(&json).unwrap();
         let b = girders_json::from_reader_with(json.as_bytes(), &value(), DecodeOptions::new(), chunk).unwrap();
         prop_assert_eq!(&a, &b);
@@ -106,7 +106,7 @@ proptest! {
     /// the same success/failure outcome.
     #[test]
     fn accumulate_contains_fail_fast(v in arb_value()) {
-        let json = girders_json::encode(&v, &value());
+        let json = girders_json::encode(&v, &value()).unwrap();
         let c = list(rec());
         let fast = girders_json::decode(&json, &c);
         let all = girders_json::decode_with(&json, &c, DecodeOptions::strict());

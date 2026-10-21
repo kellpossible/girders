@@ -18,6 +18,7 @@ use core::marker::PhantomData;
 
 /// What to do when an object repeats a key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Duplicates {
     /// `DuplicateField` error (the default: strict).
     #[default]

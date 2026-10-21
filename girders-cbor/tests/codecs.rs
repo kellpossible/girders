@@ -72,7 +72,7 @@ fn the_same_codec_reads_both_formats() {
         note: Some("ok".into()),
         ..sample()
     };
-    let json = girders_json::encode(&v, &reading());
+    let json = girders_json::encode(&v, &reading()).unwrap();
     assert_eq!(
         json,
         r#"{"sensor":7,"label":"t","celsius":21.5,"raw":[1,2],"note":"ok"}"#
@@ -175,7 +175,7 @@ fn tags_are_checked_where_the_format_has_them() {
     let err = decode(&hex("c01a514b67b0"), &epoch).unwrap_err();
     assert!(err.to_string().contains("tag 1"), "{err}");
     // JSON has no tags: the tag is dropped and not required.
-    assert_eq!(girders_json::encode(&5, &epoch), "5");
+    assert_eq!(girders_json::encode(&5, &epoch).unwrap(), "5");
     assert_eq!(girders_json::decode("5", &epoch).unwrap(), 5);
 }
 
@@ -183,9 +183,12 @@ fn tags_are_checked_where_the_format_has_them() {
 fn values_with_integer_keys_convert_to_json() {
     let v = decode(&hex("a201020304"), &value()).unwrap();
     assert_eq!(v.to_string(), "{1: 2, 3: 4}");
-    assert_eq!(girders_json::encode(&v, &value()), r#"{"1":2,"3":4}"#);
+    assert_eq!(
+        girders_json::encode(&v, &value()).unwrap(),
+        r#"{"1":2,"3":4}"#
+    );
     let bad = Value::Map(vec![(Value::Array(vec![]), Value::Null)]);
-    assert!(girders_json::try_encode(&bad, &value(), girders_json::Style::Compact).is_err());
+    assert!(girders_json::encode(&bad, &value()).is_err());
 }
 
 fn arb_value() -> impl Strategy<Value = Value> {

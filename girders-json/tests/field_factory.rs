@@ -30,7 +30,7 @@ fn no_annotations_needed() {
         }
     );
     assert_eq!(
-        girders_json::encode(&u, &user()),
+        girders_json::encode(&u, &user()).unwrap(),
         r#"{"id":"a","age":3,"email":null}"#
     );
 }

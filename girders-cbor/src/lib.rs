@@ -44,7 +44,7 @@ pub type Error = DecodeError<Span>;
 
 /// The reader as a trait object. Decoding goes through this so the
 /// reader's code exists once, shared by every codec.
-pub type DynReader<'a> = dyn Reader<Location = Span, Checkpoint = CborCheckpoint> + 'a;
+pub(crate) type DynReader<'a> = dyn Reader<Location = Span, Checkpoint = CborCheckpoint> + 'a;
 
 /// Decode one complete data item; trailing bytes are an error.
 pub fn decode<C: Decoder + ?Sized>(input: &[u8], codec: &C) -> Result<C::Output, Error> {
@@ -61,7 +61,7 @@ pub fn decode_with<C: Decoder + ?Sized>(
 
 /// Decode one data item from any source; trailing bytes are an error.
 ///
-/// The reader is passed to the codec as a trait object ([`DynReader`]),
+/// The reader is passed to the codec as a trait object,
 /// so its code exists once however many codecs use it.
 pub fn decode_source<S: Source, C: Decoder + ?Sized>(
     src: S,
@@ -104,7 +104,24 @@ pub fn from_reader_with<R: std::io::Read, C: Decoder + ?Sized>(
     )
 }
 
-/// Encode with preferred serialization.
+/// Decode into a [`Value`].
+pub fn parse(input: &[u8]) -> Result<Value, Error> {
+    decode(input, &value())
+}
+
+/// Stream the encoding into any `std::io::Write`.
+#[cfg(feature = "std")]
+pub fn encode_to_writer<W: std::io::Write, C: Encoder + ?Sized>(
+    mut out: W,
+    v: &C::Input,
+    codec: &C,
+    options: EncodeOptions,
+) -> std::io::Result<()> {
+    out.write_all(&encode_with(v, codec, options))
+}
+
+/// Encode with preferred serialization. CBOR can represent every value, so
+/// this can't fail.
 pub fn encode<C: Encoder + ?Sized>(v: &C::Input, codec: &C) -> Vec<u8> {
     encode_with(v, codec, EncodeOptions::default())
 }

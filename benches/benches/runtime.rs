@@ -108,7 +108,7 @@ fn encode_serde_canada(v: canada::Canada) -> String {
 #[library_benchmark]
 #[bench::canada(setup = canada_value, args = ["canada.json"])]
 fn encode_girders_canada(v: canada::Canada) -> String {
-    black_box(girders_json::encode(black_box(&v), &canada::codec()))
+    black_box(girders_json::encode(black_box(&v), &canada::codec()).unwrap())
 }
 
 #[library_benchmark]
@@ -120,7 +120,7 @@ fn encode_serde_citm(v: citm::CitmCatalog) -> String {
 #[library_benchmark]
 #[bench::citm(setup = citm_value, args = ["citm_catalog.json"])]
 fn encode_girders_citm(v: citm::CitmCatalog) -> String {
-    black_box(girders_json::encode(black_box(&v), &citm::codec()))
+    black_box(girders_json::encode(black_box(&v), &citm::codec()).unwrap())
 }
 
 #[library_benchmark]
@@ -132,7 +132,7 @@ fn encode_serde_twitter(v: twitter::Twitter) -> String {
 #[library_benchmark]
 #[bench::twitter(setup = twitter_value, args = ["twitter.json"])]
 fn encode_girders_twitter(v: twitter::Twitter) -> String {
-    black_box(girders_json::encode(black_box(&v), &twitter::codec()))
+    black_box(girders_json::encode(black_box(&v), &twitter::codec()).unwrap())
 }
 
 library_benchmark_group!(
@@ -244,31 +244,6 @@ library_benchmark_group!(
     benchmarks = [stream_reader, stream_serde_reader, stream_push_one_document]
 );
 
-// -- dyn serializer (code-size experiment) ---------------------------------------------
-
-#[library_benchmark]
-#[bench::canada(setup = canada_value, args = ["canada.json"])]
-fn encode_dyn_canada(v: canada::Canada) -> String {
-    black_box(girders_json::encode_dyn(black_box(&v), &canada::codec()))
-}
-
-#[library_benchmark]
-#[bench::citm(setup = citm_value, args = ["citm_catalog.json"])]
-fn encode_dyn_citm(v: citm::CitmCatalog) -> String {
-    black_box(girders_json::encode_dyn(black_box(&v), &citm::codec()))
-}
-
-#[library_benchmark]
-#[bench::twitter(setup = twitter_value, args = ["twitter.json"])]
-fn encode_dyn_twitter(v: twitter::Twitter) -> String {
-    black_box(girders_json::encode_dyn(black_box(&v), &twitter::codec()))
-}
-
-library_benchmark_group!(
-    name = dyn_dispatch,
-    benchmarks = [encode_dyn_canada, encode_dyn_citm, encode_dyn_twitter]
-);
-
 // -- Value lookups and encoding -----------------------------------------------------
 
 use girders_json::Node;
@@ -331,7 +306,10 @@ fn lookup_citm(v: (Value, Vec<String>)) -> (usize, (Value, Vec<String>)) {
 #[library_benchmark]
 #[bench::twitter(setup = parse_value, args = ["twitter.json"])]
 fn encode_value_girders(v: Value) -> (String, Value) {
-    (black_box(girders_json::encode(black_box(&v), &value())), v)
+    (
+        black_box(girders_json::encode(black_box(&v), &value()).unwrap()),
+        v,
+    )
 }
 
 fn parse_serde_value(name: &str) -> serde_json::Value {
@@ -535,13 +513,13 @@ fn events_value(_: ()) -> Vec<events::Event> {
 }
 
 fn events_json(_: ()) -> String {
-    girders_json::encode(&events::sample(), &list(events::event()))
+    girders_json::encode(&events::sample(), &list(events::event())).unwrap()
 }
 
 #[library_benchmark]
 #[bench::events(setup = events_value, args = [()])]
 fn encode_events(v: Vec<events::Event>) -> String {
-    black_box(girders_json::encode(black_box(&v), &list(events::event())))
+    black_box(girders_json::encode(black_box(&v), &list(events::event())).unwrap())
 }
 
 #[library_benchmark]
@@ -560,7 +538,6 @@ main!(
         encode_typed,
         dynamic_value,
         streaming,
-        dyn_dispatch,
         value_ops,
         cbor,
         unions

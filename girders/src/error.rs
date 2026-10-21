@@ -8,12 +8,24 @@ use alloc::vec::Vec;
 use core::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PathSegment {
     Key(String),
     Index(usize),
 }
 
+/// A key as itself, an index as its number.
+impl fmt::Display for PathSegment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PathSegment::Key(k) => f.write_str(k),
+            PathSegment::Index(i) => write!(f, "{i}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Problem {
     TypeMismatch {
         expected: Cow<'static, str>,

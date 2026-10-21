@@ -810,7 +810,7 @@ mod tests {
         let a: Twitter = serde_json::from_str(&json).unwrap();
         let b = girders_json::decode(&json, &codec()).unwrap();
         assert_eq!(a, b);
-        let back = girders_json::encode(&b, &codec());
+        let back = girders_json::encode(&b, &codec()).unwrap();
         assert_eq!(girders_json::decode(&back, &codec()).unwrap(), b);
         assert_eq!(serde_json::from_str::<Twitter>(&back).unwrap(), a);
     }

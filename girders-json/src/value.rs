@@ -609,7 +609,8 @@ fn decode_value<R: Reader + ?Sized>(r: &mut R, cx: &mut DecodeContext) -> Decode
             r.end_object()?;
             Node::Object(m)
         }
-        Kind::Eof | Kind::Bytes | Kind::Tag | Kind::Simple => {
+        // End of input, or kinds JSON doesn't have (byte strings, tags, ...).
+        _ => {
             return Err(girders::reader::mismatch(r, "value"));
         }
     };
@@ -639,6 +640,8 @@ fn encode_value<S: Serializer + ?Sized>(v: &Value, s: &mut S) -> Result<(), S::E
         Node::Number(Number::U64(u)) => s.write_u64(*u),
         Node::Number(Number::F64(f)) => s.write_f64(*f),
         Node::Number(Number::BigInt(t)) => s.write_number_text(t),
+        // Kinds of number a future format may add: write the value's text.
+        Node::Number(other) => s.write_number_text(&alloc::format!("{other}")),
         Node::String(t) => s.write_str(t),
         Node::Array(items) => {
             s.begin_array(Some(items.len()))?;

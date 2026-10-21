@@ -17,7 +17,7 @@ fn user() -> impl Codec<Output = User> {
 }
 
 let user: User = girders_json::decode(json, &user())?;
-let json = girders_json::encode(&user, &user());
+let json = girders_json::encode(&user, &user())?;
 ```
 
 This is an experiment, and a comparison with both the Gleam original

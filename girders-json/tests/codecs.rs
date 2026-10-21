@@ -127,7 +127,7 @@ fn extras_collects_unknown_keys() {
         ["a", "b"]
     );
     assert_eq!(
-        girders_json::encode(&o, &c),
+        girders_json::encode(&o, &c).unwrap(),
         r#"{"name":"n","a":1,"b":[true]}"#
     );
 }
@@ -159,7 +159,8 @@ fn field_default_and_skip_none() {
                 email: None
             },
             &user()
-        ),
+        )
+        .unwrap(),
         r#"{"id":"a","age":1}"#
     );
 }
@@ -200,7 +201,7 @@ fn fields_of_flattens_explicitly() {
         }
     );
     assert_eq!(
-        girders_json::encode(&p, &c),
+        girders_json::encode(&p, &c).unwrap(),
         r#"{"page":2,"per_page":10,"items":["a"]}"#
     );
     // Strictness sees the merged field set.
@@ -287,16 +288,16 @@ fn numbers() {
         dec(&f64(), "1e400").unwrap_err().problem(),
         Problem::OutOfRange(_)
     ));
-    assert_eq!(girders_json::encode(&2.0, &f64()), "2.0");
-    assert_eq!(girders_json::encode(&1e300, &f64()), "1e300");
-    assert_eq!(girders_json::encode(&0.1f32, &f32()), "0.1");
-    assert!(girders_json::try_encode(&f64::NAN, &f64(), girders_json::Style::Compact).is_err());
+    assert_eq!(girders_json::encode(&2.0, &f64()).unwrap(), "2.0");
+    assert_eq!(girders_json::encode(&1e300, &f64()).unwrap(), "1e300");
+    assert_eq!(girders_json::encode(&0.1f32, &f32()).unwrap(), "0.1");
+    assert!(girders_json::encode(&f64::NAN, &f64()).is_err());
 }
 
 #[test]
 fn string_escapes_round_trip() {
     let s = "quote\" back\\ nl\n tab\t ctl\u{1} emoji😀 é".to_string();
-    let json = girders_json::encode(&s, &string());
+    let json = girders_json::encode(&s, &string()).unwrap();
     assert_eq!(json, r#""quote\" back\\ nl\n tab\t ctl\u0001 emoji😀 é""#);
     assert_eq!(dec(&string(), &json).unwrap(), s);
     assert_eq!(dec(&string(), r#""😀é""#).unwrap(), "😀é");
@@ -369,7 +370,7 @@ fn union_claim_is_scoped() {
     let v = dec(&thing(), r#"{"items":[{"type":"x"}],"type":"bag"}"#).unwrap();
     assert_eq!(v, Thing::Bag(vec![Item { kind: "x".into() }]));
     assert_eq!(
-        girders_json::encode(&v, &thing()),
+        girders_json::encode(&v, &thing()).unwrap(),
         r#"{"type":"bag","items":[{"type":"x"}]}"#
     );
     let e = dec(&thing(), r#"{"text":"t"}"#).unwrap_err();
@@ -396,7 +397,7 @@ fn adjacent_union_round_trip() {
     let v = dec(&thing_adjacent(), r#"{"data":"hi","kind":"note"}"#).unwrap();
     assert_eq!(v, Thing::Note("hi".into()));
     assert_eq!(
-        girders_json::encode(&v, &thing_adjacent()),
+        girders_json::encode(&v, &thing_adjacent()).unwrap(),
         r#"{"kind":"note","data":"hi"}"#
     );
     let e = dec(&thing_adjacent(), r#"{"kind":"note","data":3}"#).unwrap_err();
@@ -486,7 +487,7 @@ fn versioned_dispatch() {
         full_name: "Cy".into(),
         age: 4,
     };
-    let json = girders_json::encode(&v, &c);
+    let json = girders_json::encode(&v, &c).unwrap();
     assert_eq!(json, r#"{"schema_version":3,"full_name":"Cy","age":4}"#);
     assert_eq!(dec(&c, &json).unwrap(), v);
 }
@@ -498,7 +499,7 @@ fn versioned_envelope() {
         full_name: "E".into(),
         age: 1,
     };
-    let json = girders_json::encode(&v, &c);
+    let json = girders_json::encode(&v, &c).unwrap();
     assert_eq!(json, r#"{"version":2,"data":{"full_name":"E","age":1}}"#);
     assert_eq!(
         dec(&c, r#"{"data":{"full_name":"E","age":1},"version":2}"#).unwrap(),
@@ -531,7 +532,7 @@ fn recursive_tree() {
     let c = recursive(TreeDef);
     let input = r#"{"value":1,"children":[{"value":2,"children":[]},{"value":3,"children":[{"value":4,"children":[]}]}]}"#;
     let t = dec(&c, input).unwrap();
-    assert_eq!(girders_json::encode(&t, &c), input);
+    assert_eq!(girders_json::encode(&t, &c).unwrap(), input);
     let e = dec(
         &c,
         r#"{"value":1,"children":[{"value":2,"children":[{"value":"x","children":[]}]}]}"#,
@@ -686,12 +687,22 @@ fn pretty_snapshots() {
             .unwrap();
     insta::assert_snapshot!(
         "pretty_nested_object",
-        girders_json::encode_pretty(&v, &value(), "  ")
+        girders_json::encode_with(
+            &v,
+            &value(),
+            girders_json::EncodeOptions::new().pretty("  ")
+        )
+        .unwrap()
     );
     let v: Value = girders_json::parse(r#"[1,[2,3],{"k":4},{},[]]"#).unwrap();
     insta::assert_snapshot!(
         "pretty_top_level_array",
-        girders_json::encode_pretty(&v, &value(), "  ")
+        girders_json::encode_with(
+            &v,
+            &value(),
+            girders_json::EncodeOptions::new().pretty("  ")
+        )
+        .unwrap()
     );
 }
 
@@ -728,7 +739,7 @@ fn large_objects_use_a_hash_index_and_fall_back_when_keys_collide() {
             "{{{}}}",
             keys.iter()
                 .enumerate()
-                .map(|(i, k)| format!("{}:{i}", girders_json::encode(k, &string())))
+                .map(|(i, k)| format!("{}:{i}", girders_json::encode(k, &string()).unwrap()))
                 .collect::<Vec<_>>()
                 .join(",")
         );

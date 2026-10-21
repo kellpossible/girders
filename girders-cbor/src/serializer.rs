@@ -11,6 +11,7 @@ use girders::half;
 
 /// How floats are written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Floats {
     /// The shortest of half, single and double precision that holds the
     /// value exactly: RFC 8949 preferred serialization.
@@ -24,8 +25,22 @@ pub enum Floats {
 
 /// Choices for [`CborSerializer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct EncodeOptions {
     pub floats: Floats,
+}
+
+impl EncodeOptions {
+    /// Preferred serialization.
+    pub const fn new() -> Self {
+        EncodeOptions {
+            floats: Floats::Shortest,
+        }
+    }
+
+    pub const fn floats(self, floats: Floats) -> Self {
+        EncodeOptions { floats, ..self }
+    }
 }
 
 pub struct CborSerializer {

@@ -6,7 +6,7 @@ use crate::error::{Collector, DecodeError, PathSegment, Problem};
 use crate::reader::Reader;
 use crate::record::Duplicates;
 use crate::serializer::Serializer;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, btree_map};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -194,11 +194,13 @@ where
                 let Some(key) = self.decode_key(r, cx, &mut errs)? else {
                     continue;
                 };
-                if out.contains_key(&key) {
-                    match self.duplicates {
+                // One lookup serves both the duplicate check and the insert.
+                let slot = match out.entry(key) {
+                    btree_map::Entry::Vacant(slot) => MapSlot::Vacant(slot),
+                    btree_map::Entry::Occupied(slot) => match self.duplicates {
                         Duplicates::Error => {
                             let e = DecodeError::at(
-                                Problem::DuplicateField(key_text(&self.key, &key)),
+                                Problem::DuplicateField(key_text(&self.key, slot.key())),
                                 at,
                             );
                             if !cx.options.accumulate {
@@ -212,17 +214,28 @@ where
                             r.skip_value()?;
                             continue;
                         }
-                        Duplicates::LastWins => {}
-                    }
-                }
+                        Duplicates::LastWins => MapSlot::Occupied(slot),
+                    },
+                };
+                let key = match &slot {
+                    MapSlot::Vacant(s) => s.key(),
+                    MapSlot::Occupied(s) => s.key(),
+                };
                 if let Some(v) = child(
                     r,
                     cx,
                     &mut errs,
-                    || PathSegment::Key(key_text(&self.key, &key)),
+                    || PathSegment::Key(key_text(&self.key, key)),
                     |r, cx| decode_child(&self.value, r, cx),
                 )? {
-                    out.insert(key, v);
+                    match slot {
+                        MapSlot::Vacant(s) => {
+                            s.insert(v);
+                        }
+                        MapSlot::Occupied(mut s) => {
+                            s.insert(v);
+                        }
+                    }
                 }
             }
             errs.finish()?;
@@ -287,6 +300,13 @@ where
         }
         s.end_object()
     }
+}
+
+/// Where a decoded entry goes: a new key, or (under `LastWins`) an
+/// existing one.
+enum MapSlot<'a, K, V> {
+    Vacant(btree_map::VacantEntry<'a, K, V>),
+    Occupied(btree_map::OccupiedEntry<'a, K, V>),
 }
 
 /// A key as text, for error paths: encoded with its own codec into a

@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn round_trips() {
         let events = sample();
-        let json = girders_json::encode(&events, &list(event()));
+        let json = girders_json::encode(&events, &list(event())).unwrap();
         assert_eq!(girders_json::decode(&json, &list(event())).unwrap(), events);
     }
 }

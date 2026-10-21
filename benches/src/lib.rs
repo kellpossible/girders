@@ -39,7 +39,7 @@ mod cbor {
         // The dynamic tree reads the same bytes, and writes them back identically.
         let tree = girders_cbor::decode(&cbor, &girders_cbor::value()).unwrap();
         assert_eq!(girders_cbor::encode(&tree, &girders_cbor::value()), cbor);
-        (girders_json::encode(&v, codec).len(), cbor.len())
+        (girders_json::encode(&v, codec).unwrap().len(), cbor.len())
     }
 
     /// The serde CBOR libraries read girders' output as the same values,
@@ -67,9 +67,7 @@ mod cbor {
         );
 
         // cbor4ii wants each float at its field's declared width.
-        let declared = girders_cbor::EncodeOptions {
-            floats: girders_cbor::Floats::Declared,
-        };
+        let declared = girders_cbor::EncodeOptions::new().floats(girders_cbor::Floats::Declared);
         let ours_declared = girders_cbor::encode_with(&v, codec, declared);
         let theirs4 = cbor4ii::serde::to_vec(Vec::new(), &v).unwrap();
         let by_cbor4ii = cbor4ii::serde::from_slice::<T>(&ours_declared);

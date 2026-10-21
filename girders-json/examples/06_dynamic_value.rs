@@ -13,17 +13,19 @@ pub fn top_level_keys(input: &str) -> Result<Vec<String>, girders_json::Error> {
 
 pub fn reencode(input: &str) -> Result<String, girders_json::Error> {
     let v: Value = girders_json::parse(input)?;
-    Ok(girders_json::encode(&v, &value()))
+    // A parsed tree holds only finite numbers and string keys: it always
+    // re-encodes.
+    Ok(girders_json::encode(&v, &value()).expect("parsed JSON re-encodes"))
 }
 
 pub fn pluck(input: &str, key: &str) -> Option<String> {
     let v: Value = girders_json::parse(input).ok()?;
-    Some(girders_json::encode(v.get(key)?, &value()))
+    girders_json::encode(v.get(key)?, &value()).ok()
 }
 
 pub fn at(input: &str, pointer: &str) -> Option<String> {
     let v: Value = girders_json::parse(input).ok()?;
-    Some(girders_json::encode(v.pointer_str(pointer)?, &value()))
+    girders_json::encode(v.pointer_str(pointer)?, &value()).ok()
 }
 
 pub fn main() {
@@ -50,8 +52,14 @@ pub fn main() {
 
     // Duplicate keys survive a round trip; lookups see the last one.
     let dup: Value = girders_json::parse(r#"{"a":1,"a":2}"#).unwrap();
-    assert_eq!(girders_json::encode(&dup, &value()), r#"{"a":1,"a":2}"#);
-    assert_eq!(girders_json::encode(dup.get("a").unwrap(), &value()), "2");
+    assert_eq!(
+        girders_json::encode(&dup, &value()).unwrap(),
+        r#"{"a":1,"a":2}"#
+    );
+    assert_eq!(
+        girders_json::encode(dup.get("a").unwrap(), &value()).unwrap(),
+        "2"
+    );
 
     // Spans point back into the source.
     let v: Value = girders_json::parse(r#"{"k": [1, 2]}"#).unwrap();

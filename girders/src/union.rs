@@ -68,6 +68,7 @@ where
 
 /// How the tag is written when encoding.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum TagStyle {
     Internal {
         tag: &'static str,

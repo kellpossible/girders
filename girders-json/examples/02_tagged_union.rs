@@ -55,7 +55,7 @@ fn f64_field(name: &'static str) -> impl Codec<Output = f64> {
     record((field(name, f64(), |x: &f64| x),)).build(|(x,)| x)
 }
 
-pub fn to_json(shape: &Shape) -> String {
+pub fn to_json(shape: &Shape) -> Result<String, girders_json::EncodeError> {
     girders_json::encode(shape, &shape_codec())
 }
 
@@ -65,17 +65,18 @@ pub fn from_json(input: &str) -> Result<Shape, girders_json::Error> {
 
 pub fn main() {
     assert_eq!(
-        to_json(&Shape::Circle { radius: 2.0 }),
+        to_json(&Shape::Circle { radius: 2.0 }).unwrap(),
         r#"{"type":"circle","radius":2.0}"#
     );
     assert_eq!(
         to_json(&Shape::Rectangle(Rectangle {
             width: 3.0,
             height: 4.0
-        })),
+        }))
+        .unwrap(),
         r#"{"type":"rectangle","width":3.0,"height":4.0}"#
     );
-    assert_eq!(to_json(&Shape::Point), r#"{"type":"point"}"#);
+    assert_eq!(to_json(&Shape::Point).unwrap(), r#"{"type":"point"}"#);
     for s in [
         Shape::Circle { radius: 2.0 },
         Shape::Rectangle(Rectangle {
@@ -84,7 +85,7 @@ pub fn main() {
         }),
         Shape::Point,
     ] {
-        assert_eq!(from_json(&to_json(&s)).unwrap(), s);
+        assert_eq!(from_json(&to_json(&s).unwrap()).unwrap(), s);
     }
     // Tag after the fields works too.
     assert_eq!(

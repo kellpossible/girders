@@ -418,8 +418,9 @@ On the benchmark documents (Callgrind instructions):
   style. It is rebuilt on each call; that's free because it is
   zero-sized.
 - **Struct-like enum variants** (`Rectangle { w, h }`) have no single
-  value to borrow, so union projections now take a `Payload`: either
-  `x.into()` (borrowed) or `Payload::Owned((w, h))`.
+  value to borrow, so union projections took a `Payload`: either
+  `x.into()` (borrowed) or `Payload::Owned((w, h))`. (Later replaced:
+  projections take `&T`, and such variants hold a named struct; see N1.)
 - **Getter annotations:** `fields_for::<T>()` (Q13) removes them. The
   models still use the annotated style.
 

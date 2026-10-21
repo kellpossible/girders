@@ -5,6 +5,7 @@ use alloc::string::String;
 use core::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Number {
     I64(i64),
     /// Only for integers above `i64::MAX`.

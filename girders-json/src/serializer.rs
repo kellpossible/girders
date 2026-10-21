@@ -42,8 +42,11 @@ impl<W: std::io::Write> Write for IoWrite<W> {
     }
 }
 
+/// Why encoding failed. `E` is the writer's error: none for in-memory
+/// output (the default), `std::io::Error` for `encode_to_writer`.
 #[derive(Debug)]
-pub enum EncodeError<E> {
+#[non_exhaustive]
+pub enum EncodeError<E = core::convert::Infallible> {
     /// JSON has no NaN or infinities.
     NonFinite(f64),
     /// A map key that JSON can't represent: strings, numbers and bools
@@ -68,8 +71,10 @@ impl<E: fmt::Debug> fmt::Display for EncodeError<E> {
 impl<E: fmt::Debug> core::error::Error for EncodeError<E> {}
 
 /// Output style.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Style {
+    #[default]
     Compact,
     /// Indent nested structure by this string per level.
     Pretty(String),

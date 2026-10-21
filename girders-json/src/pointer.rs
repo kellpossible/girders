@@ -11,6 +11,7 @@ pub struct Pointer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PointerError {
     MissingLeadingSlash,
     /// A `~` not followed by `0` or `1`, at this byte offset.
@@ -36,6 +37,8 @@ impl Pointer {
             match seg {
                 PathSegment::Key(k) => p.push(k.clone()),
                 PathSegment::Index(i) => p.push_index(*i),
+                // Kinds of segment a future version may add: their text.
+                other => p.push(alloc::format!("{other}")),
             }
         }
         p

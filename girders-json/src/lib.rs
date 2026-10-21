@@ -16,7 +16,7 @@
 //! }
 //!
 //! let u = girders_json::decode(r#"{"age": 7, "id": "a"}"#, &user()).unwrap();
-//! assert_eq!(girders_json::encode(&u, &user()), r#"{"id":"a","age":7}"#);
+//! assert_eq!(girders_json::encode(&u, &user()).unwrap(), r#"{"id":"a","age":7}"#);
 //! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -76,7 +76,7 @@ pub fn decode_bytes_with<C: Decoder + ?Sized>(
 /// Decode one document from any source; trailing non-whitespace is an
 /// error.
 ///
-/// The reader is passed to the codec as a trait object ([`DynReader`]),
+/// The reader is passed to the codec as a trait object,
 /// so its code exists once however many codecs use it.
 pub fn decode_source<S: Source, C: Decoder + ?Sized>(
     src: S,
@@ -125,36 +125,43 @@ pub fn parse(input: &str) -> Result<Value, Error> {
     decode(input, &value())
 }
 
-/// Encode to bytes in the given style. Fails only for non-finite floats.
-pub fn encode_to_vec<C: Encoder + ?Sized>(
+/// How to write JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct EncodeOptions {
+    pub style: Style,
+}
+
+impl EncodeOptions {
+    /// Compact output.
+    pub const fn new() -> Self {
+        EncodeOptions {
+            style: Style::Compact,
+        }
+    }
+
+    /// Indent nested structure by `indent` per level.
+    pub fn pretty(self, indent: impl Into<String>) -> Self {
+        EncodeOptions {
+            style: Style::Pretty(indent.into()),
+        }
+    }
+}
+
+/// Encode as compact JSON. Fails for values JSON can't represent: NaN and
+/// infinities, and map keys other than strings, numbers and bools.
+pub fn encode<C: Encoder + ?Sized>(v: &C::Input, codec: &C) -> Result<String, EncodeError> {
+    encode_with(v, codec, EncodeOptions::new())
+}
+
+pub fn encode_with<C: Encoder + ?Sized>(
     v: &C::Input,
     codec: &C,
-    style: Style,
-) -> Result<Vec<u8>, EncodeError<core::convert::Infallible>> {
-    let mut s = JsonSerializer::new(Vec::new(), style);
+    options: EncodeOptions,
+) -> Result<String, EncodeError> {
+    let mut s = JsonSerializer::new(Vec::new(), options.style);
     codec.encode(v, &mut s, &mut EncodeContext::new())?;
-    Ok(s.into_inner())
-}
-
-/// Compact JSON. Panics on a non-finite float; use [`try_encode`] to
-/// handle that.
-pub fn encode<C: Encoder + ?Sized>(v: &C::Input, codec: &C) -> String {
-    try_encode(v, codec, Style::Compact).expect("JSON cannot represent non-finite floats")
-}
-
-/// Pretty JSON with `indent` per level.
-pub fn encode_pretty<C: Encoder + ?Sized>(v: &C::Input, codec: &C, indent: &str) -> String {
-    try_encode(v, codec, Style::Pretty(indent.into()))
-        .expect("JSON cannot represent non-finite floats")
-}
-
-pub fn try_encode<C: Encoder + ?Sized>(
-    v: &C::Input,
-    codec: &C,
-    style: Style,
-) -> Result<String, EncodeError<core::convert::Infallible>> {
-    let bytes = encode_to_vec(v, codec, style)?;
-    Ok(String::from_utf8(bytes).expect("the serializer writes UTF-8"))
+    Ok(String::from_utf8(s.into_inner()).expect("the serializer writes UTF-8"))
 }
 
 /// Stream the encoding into any `std::io::Write`.
@@ -163,9 +170,9 @@ pub fn encode_to_writer<W: std::io::Write, C: Encoder + ?Sized>(
     out: W,
     v: &C::Input,
     codec: &C,
-    style: Style,
+    options: EncodeOptions,
 ) -> Result<(), EncodeError<std::io::Error>> {
-    let mut s = JsonSerializer::new(serializer::IoWrite(out), style);
+    let mut s = JsonSerializer::new(serializer::IoWrite(out), options.style);
     codec.encode(v, &mut s, &mut EncodeContext::new())
 }
 
@@ -176,17 +183,5 @@ pub fn to_pointer(err: &Error) -> Pointer {
 
 /// The JSON reader as a trait object. Decoding goes through this so the
 /// reader's code exists once, shared by every codec.
-pub type DynReader<'a> = dyn Reader<Location = Span, Checkpoint = reader::JsonCheckpoint> + 'a;
-
-/// The serializer as a trait object (see [`DynReader`]).
-pub type DynSerializer<'a> =
-    dyn girders::Serializer<Error = EncodeError<core::convert::Infallible>> + 'a;
-
-/// [`encode`] through a `dyn` serializer.
-pub fn encode_dyn<C: Encoder + ?Sized>(v: &C::Input, codec: &C) -> String {
-    let mut s = JsonSerializer::new(Vec::new(), Style::Compact);
-    codec
-        .encode::<DynSerializer<'_>>(v, &mut s, &mut EncodeContext::new())
-        .expect("JSON cannot represent non-finite floats");
-    String::from_utf8(s.into_inner()).expect("the serializer writes UTF-8")
-}
+pub(crate) type DynReader<'a> =
+    dyn Reader<Location = Span, Checkpoint = reader::JsonCheckpoint> + 'a;

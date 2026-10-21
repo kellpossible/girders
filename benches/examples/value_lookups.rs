@@ -56,7 +56,10 @@ fn main() {
             "{{{}}}",
             keys.iter()
                 .enumerate()
-                .map(|(i, k)| format!("{}:{i}", girders_json::encode(k, &girders::codec::string())))
+                .map(|(i, k)| format!(
+                    "{}:{i}",
+                    girders_json::encode(k, &girders::codec::string()).unwrap()
+                ))
                 .collect::<Vec<_>>()
                 .join(",")
         );

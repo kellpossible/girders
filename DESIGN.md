@@ -775,17 +775,32 @@ codecs by hand.
 
 ### 9.2 Entry points
 
+The JSON and CBOR crates mirror each other, so switching formats means
+changing the crate name. (`format` below is `girders_json` or
+`girders_cbor`.)
+
 ```rust
-girders_json::decode(&[u8] | &str, &codec) -> Result<T, Errors<Span>>
-girders_json::decode_with(input, &codec, DecodeOptions)
-girders_json::from_reader(impl io::Read, &codec)
-girders_json::StreamDecoder::new(codec)   // push: feed(&[u8]) / finish(); yields values
-girders_json::encode(&value, &codec) -> String
-girders_json::encode_pretty(&value, &codec, indent)
-girders_json::encode_to(impl io::Write, &value, &codec, Style)
-girders_json::parse::<M>(input) -> Result<Value<M>, …>
-girders_json::schema(&codec, Draft) -> Value
+format::decode(input, &codec) -> Result<T, Error>      // JSON: &str; CBOR: &[u8]
+format::decode_with(input, &codec, DecodeOptions)
+format::decode_source(source, &codec, DecodeOptions)   // any Source
+format::from_reader(impl io::Read, &codec)              // std
+format::from_reader_with(impl io::Read, &codec, DecodeOptions, chunk_size)
+format::StreamDecoder::new(codec)                       // push(&[u8]) / finish() / next()
+format::parse(input) -> Result<Value, Error>
+format::encode(&value, &codec)                          // JSON: Result<String, EncodeError>; CBOR: Vec<u8>
+format::encode_with(&value, &codec, EncodeOptions)
+format::encode_to_writer(impl io::Write, &value, &codec, EncodeOptions)   // std
+girders_json::decode_bytes(&[u8], &codec)               // JSON from UTF-8 bytes
+girders_json::to_pointer(&error) -> Pointer
 ```
+
+- **One deliberate difference: JSON's `encode` returns a `Result`.** JSON
+  can't represent NaN, infinities or map keys other than strings,
+  numbers and bools, and encoding never panics. CBOR can represent every
+  value, so its `encode` returns the bytes directly.
+- **Encode options:**
+  - JSON: `EncodeOptions::new().pretty("  ")`.
+  - CBOR: `EncodeOptions::new().floats(Floats::Declared)`.
 
 ### 9.3 `Value`
 
@@ -1124,17 +1139,17 @@ These were implemented as recommended, and the evidence supports them.
 | V6 | Writing old versions | Still out of scope. |
 | ~~Q3~~ | Codec representation | **Decided: compact only.** Generic combinator types, with child codecs called through the never-inlined `decode_child`. Records use one shared key loop with index dispatch. JSON entry points pass the reader as a `dyn Reader`. Compared with the removed inline mode: decode is 6–14% slower; release builds of a codec-heavy crate are ~40% faster; binaries are 14–18% smaller than serde's (ESP32-C3 `opt-level = "s"`, x86). |
 | Q6 | Push decoder restarting per top-level value | One 632 KB document in ten 64 KB chunks costs 5.7× (restarts are O(k·n)). NDJSON-sized values are unaffected. Accept and document, or require `from_reader` for large single documents? |
-| Q9 | Duplicate keys | Records default to `Duplicates::Error`, with `FirstWins` and `LastWins`. `Value` must accept duplicates (JSONTestSuite `y_object_duplicated_key`): objects keep both (lossless, lookups take the last). Typed maps (`btree_map`) follow `Duplicates` like records. Confirm? |
+| ~~Q9~~ | Duplicate keys | **Decided:** records and typed maps default to `Duplicates::Error`, with `FirstWins` and `LastWins`; repeats are detected without extra lookups. `Value` keeps every duplicate (lossless, lookups take the last). |
 | Q10 | `shape_dispatch` | Not built. `one_of` covers untagged cases. |
 | ~~Q11~~ | Hash index for objects | **Done:** objects past 64 entries get a sorted position index (no hashing). `Value` is no longer generic over the object representation. |
-| Q12 | jj, and the git ownership warning | Unchanged. Nothing is committed. |
-| N1 | Union `Payload` for struct-like variants | `Pick2::Variant0(x.into())` borrows; `Payload::Owned((w, h))` builds the payload. Every arm needs `.into()` (§6.6 changed). Accept, or allow only newtype variants? |
+| ~~Q12~~ | Version control | **Done:** jj, colocated with git. |
+| ~~N1~~ | Union payloads | **Decided: by reference.** Spiked against `Payload` on a five-variant event type: 8.6% fewer encode instructions and no clones, plainer code; variants with several fields hold a named struct. |
 | ~~N2~~ | Wide records | **Decided: tuple records, cap 16, `.build(|(a, b, …)| …)`.** Alternatives were spiked and rejected, with the numbers in RESULTS.md ("Record styles"): typed keys (`v.take(id.key)`) read well but cost about 30% more in debug builds; dropping `.key` as well (`v.take(id)`) needs `Copy` codecs and stores each codec twice, costing +45% in release; a `record!` macro_rules front end costs 3–7% and was removed (no macros); raising the cap costs +1 s (32) or +3.7 s (64) on every clean library build; right-nested tuples break rustfmt. Tuples have the best compile and run time, stay readable, and models are expected to be written with an LLM anyway. Side results kept: field codecs no longer go through a wrapper; per-field constants are associated consts; per-field method bodies live in helpers shared per value type. |
 | ~~N3~~ | Missing primitives | **Done.** `btree_map(key, value)`: keys and values through their own codecs, only `BTreeMap` (deterministic order, `no_std`). The format decides how a key looks: JSON quotes strings, numbers and bools and rejects anything else, matching serde_json in both directions (finite floats only, JSON number grammar); CBOR keys are native values. Duplicates are an error by default (`.duplicates(...)`). `array(c)` for `[T; N]`, built in place through `[Option<T>; N]`: no allocation, no `Default`, no `unsafe`. `stringified(number)` for numbers written as strings, in JSON number grammar. |
 | N4 | `Value` memory | **Done:** a niche-optimized 16-byte `Option<Span>` (64-bit offsets, no size limit) and key spans in an optional side table (`DecodeOptions::key_spans`). Node 56 → 48 bytes, entry 104 → 72 bytes. Remaining gap to serde_json on number-heavy data: each node still carries a span slot. |
 | N5 | `#![forbid(unsafe_code)]` | Costs on byte input: the ~10% `from_utf8` on canada number lexemes, plus UTF-8 checks on strings. `&str` input now avoids most of it with no `unsafe`. Keep the forbid, or allow audited `unsafe` in the reader? |
 | N6 | Float formatting with zero dependencies | canada encode is 4.6× serde, almost all in core's `{:?}` float formatting. Options: accept; port a shortest round-trip float formatter (Ryū is Apache-2.0/BSL-1.0 but large); or allow one dependency (`ryu` or `zmij`; would need researching). |
-| N7 | `optional_field` writes `null` for `None` (Gleam and serde parity) | `.skip_none()` omits the key instead. Keep `null` as the default? |
+| ~~N7~~ | `None` in optional fields | **Decided:** written as `null` by default (serde and Gleam parity); `.skip_none()` omits the key. |
 | N8 | Remaining decode gap of 1.3–1.9× | Next levers: (a) dispatch records by key length or first byte instead of a linear compare chain; (b) a whole-buffer fast path for scanning slices; (c) number lexing without per-byte `peek`. Worth pursuing in a throwaway, or stop here? |
 | ~~N10~~ | Encoding strategy | **Decided: encoding stays inline (generic over the serializer).** Out-of-line child calls, a `dyn` serializer, and both together were measured (RESULTS.md, "Encoding strategy"). They save at most 5.6% of release compile instructions and 2% of binary text, but every variant makes debug builds 0.9–1.3% slower and encoding up to 12% slower. Debug build time is the priority. |
 | N9 | Gleam comparison | Not run. The corpus is plain JSON in `benches/data`, ready for the Gleam side. |
@@ -1150,8 +1165,9 @@ These were implemented as recommended, and the evidence supports them.
 
 Each item points back to the section of this document it changes.
 
-- **§6.6 (union projections):** picks take `Payload<'a, T>`, not `&T`. Struct-like
-  variants have no single value to borrow (N1). There's also an
+- **§6.6 (union projections):** picks take `&T`. A variant with several
+  named fields holds them in a struct of its own (`Rectangle(Rectangle)`),
+  and a fieldless variant passes `&()` (N1). There's also an
   `empty_object()` codec for fieldless variants (`{"type":"point"}`).
 - **§6.4 (records):**
   - `Duplicates::{Error, FirstWins, LastWins}`.

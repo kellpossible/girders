@@ -56,7 +56,7 @@ pub fn main() {
         ],
         seats: BTreeMap::from([("admin".into(), 1), ("dev".into(), 3)]),
     };
-    let json = girders_json::encode(&team, &team_codec());
+    let json = girders_json::encode(&team, &team_codec()).unwrap();
     assert_eq!(girders_json::decode(&json, &team_codec()).unwrap(), team);
 
     let t = girders_json::decode(

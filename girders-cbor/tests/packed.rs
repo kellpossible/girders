@@ -24,7 +24,7 @@ fn f16_quantizes_to_the_nearest_half() {
         1.099_609_4
     );
     assert_eq!(girders_json::decode("1.1", &f16()).unwrap(), 1.099_609_4);
-    assert_eq!(girders_json::encode(&1.1, &f16()), "1.0996094");
+    assert_eq!(girders_json::encode(&1.1, &f16()).unwrap(), "1.0996094");
     assert_eq!(decode(&hex("f9 7bff"), &f16()).unwrap(), 65504.0);
 }
 
@@ -101,7 +101,7 @@ fn packed_arrays_check_the_tag_and_the_length() {
 #[test]
 fn json_has_plain_arrays() {
     let v = vec![1u16, 2, 3];
-    assert_eq!(girders_json::encode(&v, &packed(u16())), "[1,2,3]");
+    assert_eq!(girders_json::encode(&v, &packed(u16())).unwrap(), "[1,2,3]");
     assert_eq!(girders_json::decode("[1,2,3]", &packed(u16())).unwrap(), v);
 }
 
@@ -139,6 +139,6 @@ proptest! {
         let back = decode(&encode(&d, &packed(f64())), &packed(f64())).unwrap();
         prop_assert_eq!(back.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), d.iter().map(|x| x.to_bits()).collect::<Vec<_>>());
         // And through JSON, as plain arrays.
-        prop_assert_eq!(girders_json::decode(&girders_json::encode(&a, &packed(u16())), &packed(u16())).unwrap(), a);
+        prop_assert_eq!(girders_json::decode(&girders_json::encode(&a, &packed(u16())).unwrap(), &packed(u16())).unwrap(), a);
     }
 }

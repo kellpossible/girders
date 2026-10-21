@@ -9,6 +9,7 @@
 /// only built when something fails, so on the success path they cost
 /// almost nothing; turning them off mainly shrinks errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DecodeOptions {
     /// Attach locations to errors and record spans (`spanned`, `Value`).
     pub track_locations: bool,
@@ -115,6 +116,7 @@ impl Default for DecodeOptions {
 
 /// Decode-side context.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct DecodeContext {
     pub options: DecodeOptions,
     /// Current container nesting.
@@ -210,6 +212,7 @@ impl DecodeContext {
 
 /// A tag value written by unions and versioned codecs.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum TagValue {
     Str(&'static str),
     Int(i64),
@@ -217,6 +220,7 @@ pub enum TagValue {
 
 /// Encode-side context.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct EncodeContext {
     /// A `key: value` entry the next record writes before its own fields
     /// (internally-tagged unions, versioned codecs).

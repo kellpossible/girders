@@ -45,12 +45,17 @@ pub fn main() {
             },
         ],
     };
-    let compact = girders_json::encode(&config, &config_codec());
+    let compact = girders_json::encode(&config, &config_codec()).unwrap();
     assert_eq!(
         compact,
         r#"{"name":"prod","servers":[{"host":"a","port":1},{"host":"b","port":2}]}"#
     );
-    let pretty = girders_json::encode_pretty(&config, &config_codec(), "  ");
+    let pretty = girders_json::encode_with(
+        &config,
+        &config_codec(),
+        girders_json::EncodeOptions::new().pretty("  "),
+    )
+    .unwrap();
     assert_eq!(
         pretty,
         r#"{

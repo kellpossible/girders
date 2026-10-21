@@ -10,6 +10,7 @@ use core::fmt::Debug;
 /// The broad classification of the next value, for dispatch and for
 /// `TypeMismatch` messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Kind {
     String,
     Number,

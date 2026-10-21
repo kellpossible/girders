@@ -303,7 +303,7 @@ fn json_values_round_trip_through_cbor() {
     let codec = girders_json::value();
     let bytes = encode(&v, &codec);
     let back = decode(&bytes, &codec).unwrap();
-    assert_eq!(girders_json::encode(&back, &codec), json);
+    assert_eq!(girders_json::encode(&back, &codec).unwrap(), json);
     // And the CBOR tree sees the same data.
     assert_eq!(
         decode(&bytes, &value()).unwrap().to_string(),
