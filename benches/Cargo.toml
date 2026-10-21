@@ -10,7 +10,6 @@ girders-json = { path = "../girders-json" }
 girders-cbor = { path = "../girders-cbor" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-indexmap = "2.14.2"
 # CBOR baselines: ciborium is the common serde choice, cbor4ii a maintained, fast one.
 ciborium = "0.2.2"
 cbor4ii = { version = "1.2.4", features = ["serde1", "use_std"] }

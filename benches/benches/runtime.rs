@@ -5,8 +5,8 @@
 //! Run: `mise run bench` (needs valgrind and gungraun-runner 0.20.0).
 
 use girders::DecodeOptions;
-use girders_benches::{Indexed, Linear, canada, citm, data, twitter};
-use girders_json::{Hashed, Ordered, Sorted, StreamDecoder, Value, value};
+use girders_benches::{canada, citm, data, twitter};
+use girders_json::{StreamDecoder, Value, value};
 use gungraun::{Dhat, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
@@ -149,46 +149,43 @@ library_benchmark_group!(
 // -- dynamic values -----------------------------------------------------------------
 
 #[library_benchmark]
-#[benches::corpus(setup = load, args = ["canada.json", "twitter.json"])]
+#[benches::corpus(setup = load, args = ["canada.json", "twitter.json", "citm_catalog.json"])]
 fn value_serde(json: String) -> serde_json::Value {
     black_box(serde_json::from_str(black_box(&json)).unwrap())
 }
 
 #[library_benchmark]
-#[benches::corpus(setup = load, args = ["canada.json", "twitter.json"])]
-fn value_ordered(json: String) -> Value<Ordered> {
-    black_box(girders_json::parse::<Ordered>(black_box(&json)).unwrap())
+#[benches::corpus(setup = load, args = ["canada.json", "twitter.json", "citm_catalog.json"])]
+fn value_girders(json: String) -> Value {
+    black_box(girders_json::parse(black_box(&json)).unwrap())
 }
 
 #[library_benchmark]
 #[benches::corpus(setup = load, args = ["canada.json", "twitter.json"])]
-fn value_ordered_fast(json: String) -> Value<Ordered> {
+fn value_girders_fast(json: String) -> Value {
+    black_box(girders_json::decode_with(black_box(&json), &value(), DecodeOptions::fast()).unwrap())
+}
+
+#[library_benchmark]
+#[benches::corpus(setup = load, args = ["canada.json", "twitter.json", "citm_catalog.json"])]
+fn value_girders_key_spans(json: String) -> Value {
     black_box(
-        girders_json::decode_with(black_box(&json), &value::<Ordered>(), DecodeOptions::fast())
-            .unwrap(),
+        girders_json::decode_with(
+            black_box(&json),
+            &value(),
+            DecodeOptions::new().key_spans(true),
+        )
+        .unwrap(),
     )
-}
-
-#[library_benchmark]
-#[benches::corpus(setup = load, args = ["canada.json", "twitter.json"])]
-fn value_sorted(json: String) -> Value<Sorted> {
-    black_box(girders_json::parse::<Sorted>(black_box(&json)).unwrap())
-}
-
-#[library_benchmark]
-#[benches::corpus(setup = load, args = ["canada.json", "twitter.json"])]
-fn value_hashed(json: String) -> Value<Hashed> {
-    black_box(girders_json::parse::<Hashed>(black_box(&json)).unwrap())
 }
 
 library_benchmark_group!(
     name = dynamic_value,
     benchmarks = [
         value_serde,
-        value_ordered,
-        value_ordered_fast,
-        value_sorted,
-        value_hashed
+        value_girders,
+        value_girders_fast,
+        value_girders_key_spans
     ]
 );
 
@@ -271,13 +268,13 @@ library_benchmark_group!(
     benchmarks = [encode_dyn_canada, encode_dyn_citm, encode_dyn_twitter]
 );
 
-// -- Value representations: lookups and encoding -------------------------------------
+// -- Value lookups and encoding -----------------------------------------------------
 
-use girders_json::{Node, ObjectMap};
+use girders_json::Node;
 
 /// Every status's `user.screen_name`, `id` and `text`, and
 /// `search_metadata.count`: typical shallow lookups in small objects.
-fn twitter_lookups<M: ObjectMap>(v: &Value<M>) -> usize {
+fn twitter_lookups(v: &Value) -> usize {
     let mut n = 0;
     if let Some(Node::Array(statuses)) = v.get("statuses").map(|s| &s.node) {
         for st in statuses {
@@ -295,19 +292,19 @@ fn twitter_lookups<M: ObjectMap>(v: &Value<M>) -> usize {
 }
 
 /// Look up every key of citm's 184-entry `events` object: lookups in a
-/// large object.
-fn citm_lookups<M: ObjectMap>(input: &(Value<M>, Vec<String>)) -> usize {
+/// large (indexed) object.
+fn citm_lookups(input: &(Value, Vec<String>)) -> usize {
     let (v, keys) = input;
     let events = v.get("events").unwrap();
     keys.iter().filter(|k| events.get(k).is_some()).count()
 }
 
-fn parse_twitter<M: ObjectMap>(name: &str) -> Value<M> {
-    girders_json::parse::<M>(&data(name)).unwrap()
+fn parse_value(name: &str) -> Value {
+    girders_json::parse(&data(name)).unwrap()
 }
 
-fn parse_citm_keys<M: ObjectMap>(name: &str) -> (Value<M>, Vec<String>) {
-    let v = girders_json::parse::<M>(&data(name)).unwrap();
+fn parse_citm_keys(name: &str) -> (Value, Vec<String>) {
+    let v = parse_value(name);
     let keys = v
         .get("events")
         .unwrap()
@@ -319,61 +316,23 @@ fn parse_citm_keys<M: ObjectMap>(name: &str) -> (Value<M>, Vec<String>) {
 }
 
 #[library_benchmark]
-#[bench::twitter(setup = parse_twitter::<Ordered>, args = ["twitter.json"])]
-fn lookup_twitter_ordered(v: Value<Ordered>) -> (usize, Value<Ordered>) {
-    (black_box(twitter_lookups(black_box(&v))), v)
-}
-#[library_benchmark]
-#[bench::twitter(setup = parse_twitter::<Sorted>, args = ["twitter.json"])]
-fn lookup_twitter_sorted(v: Value<Sorted>) -> (usize, Value<Sorted>) {
-    (black_box(twitter_lookups(black_box(&v))), v)
-}
-#[library_benchmark]
-#[bench::twitter(setup = parse_twitter::<Hashed>, args = ["twitter.json"])]
-fn lookup_twitter_hashed(v: Value<Hashed>) -> (usize, Value<Hashed>) {
+#[bench::twitter(setup = parse_value, args = ["twitter.json"])]
+fn lookup_twitter(v: Value) -> (usize, Value) {
     (black_box(twitter_lookups(black_box(&v))), v)
 }
 
 #[library_benchmark]
-#[bench::citm(setup = parse_citm_keys::<Ordered>, args = ["citm_catalog.json"])]
-fn lookup_citm_ordered(v: (Value<Ordered>, Vec<String>)) -> (usize, (Value<Ordered>, Vec<String>)) {
-    (black_box(citm_lookups(black_box(&v))), v)
-}
-#[library_benchmark]
-#[bench::citm(setup = parse_citm_keys::<Sorted>, args = ["citm_catalog.json"])]
-fn lookup_citm_sorted(v: (Value<Sorted>, Vec<String>)) -> (usize, (Value<Sorted>, Vec<String>)) {
-    (black_box(citm_lookups(black_box(&v))), v)
-}
-#[library_benchmark]
-#[bench::citm(setup = parse_citm_keys::<Hashed>, args = ["citm_catalog.json"])]
-fn lookup_citm_hashed(v: (Value<Hashed>, Vec<String>)) -> (usize, (Value<Hashed>, Vec<String>)) {
+#[bench::citm(setup = parse_citm_keys, args = ["citm_catalog.json"])]
+fn lookup_citm(v: (Value, Vec<String>)) -> (usize, (Value, Vec<String>)) {
     (black_box(citm_lookups(black_box(&v))), v)
 }
 
 #[library_benchmark]
-#[bench::twitter(setup = parse_twitter::<Ordered>, args = ["twitter.json"])]
-fn encode_value_ordered(v: Value<Ordered>) -> (String, Value<Ordered>) {
-    (
-        black_box(girders_json::encode(black_box(&v), &value::<Ordered>())),
-        v,
-    )
+#[bench::twitter(setup = parse_value, args = ["twitter.json"])]
+fn encode_value_girders(v: Value) -> (String, Value) {
+    (black_box(girders_json::encode(black_box(&v), &value())), v)
 }
-#[library_benchmark]
-#[bench::twitter(setup = parse_twitter::<Sorted>, args = ["twitter.json"])]
-fn encode_value_sorted(v: Value<Sorted>) -> (String, Value<Sorted>) {
-    (
-        black_box(girders_json::encode(black_box(&v), &value::<Sorted>())),
-        v,
-    )
-}
-#[library_benchmark]
-#[bench::twitter(setup = parse_twitter::<Hashed>, args = ["twitter.json"])]
-fn encode_value_hashed(v: Value<Hashed>) -> (String, Value<Hashed>) {
-    (
-        black_box(girders_json::encode(black_box(&v), &value::<Hashed>())),
-        v,
-    )
-}
+
 fn parse_serde_value(name: &str) -> serde_json::Value {
     serde_json::from_str(&data(name)).unwrap()
 }
@@ -384,132 +343,14 @@ fn encode_value_serde(v: serde_json::Value) -> (String, serde_json::Value) {
     (black_box(serde_json::to_string(black_box(&v)).unwrap()), v)
 }
 
-#[library_benchmark]
-#[bench::citm(setup = load, args = ["citm_catalog.json"])]
-fn value_citm_serde(json: String) -> serde_json::Value {
-    black_box(serde_json::from_str(black_box(&json)).unwrap())
-}
-#[library_benchmark]
-#[bench::citm(setup = load, args = ["citm_catalog.json"])]
-fn value_citm_ordered(json: String) -> Value<Ordered> {
-    black_box(girders_json::parse::<Ordered>(black_box(&json)).unwrap())
-}
-#[library_benchmark]
-#[bench::citm(setup = load, args = ["citm_catalog.json"])]
-fn value_citm_sorted(json: String) -> Value<Sorted> {
-    black_box(girders_json::parse::<Sorted>(black_box(&json)).unwrap())
-}
-#[library_benchmark]
-#[bench::citm(setup = load, args = ["citm_catalog.json"])]
-fn value_citm_hashed(json: String) -> Value<Hashed> {
-    black_box(girders_json::parse::<Hashed>(black_box(&json)).unwrap())
-}
-
 library_benchmark_group!(
     name = value_ops,
     benchmarks = [
-        lookup_twitter_ordered,
-        lookup_twitter_sorted,
-        lookup_twitter_hashed,
-        lookup_citm_ordered,
-        lookup_citm_sorted,
-        lookup_citm_hashed,
-        encode_value_ordered,
-        encode_value_sorted,
-        encode_value_hashed,
-        encode_value_serde,
-        value_citm_serde,
-        value_citm_ordered,
-        value_citm_sorted,
-        value_citm_hashed
+        lookup_twitter,
+        lookup_citm,
+        encode_value_girders,
+        encode_value_serde
     ]
-);
-
-#[library_benchmark]
-#[bench::twitter(setup = parse_twitter::<Indexed>, args = ["twitter.json"])]
-fn lookup_twitter_indexed(v: Value<Indexed>) -> (usize, Value<Indexed>) {
-    (black_box(twitter_lookups(black_box(&v))), v)
-}
-#[library_benchmark]
-#[bench::citm(setup = parse_citm_keys::<Indexed>, args = ["citm_catalog.json"])]
-fn lookup_citm_indexed(v: (Value<Indexed>, Vec<String>)) -> (usize, (Value<Indexed>, Vec<String>)) {
-    (black_box(citm_lookups(black_box(&v))), v)
-}
-#[library_benchmark]
-#[bench::twitter(setup = parse_twitter::<Indexed>, args = ["twitter.json"])]
-fn encode_value_indexed(v: Value<Indexed>) -> (String, Value<Indexed>) {
-    (
-        black_box(girders_json::encode(black_box(&v), &value::<Indexed>())),
-        v,
-    )
-}
-#[library_benchmark]
-#[benches::corpus(setup = load, args = ["canada.json", "twitter.json", "citm_catalog.json"])]
-fn value_indexed(json: String) -> Value<Indexed> {
-    black_box(girders_json::parse::<Indexed>(black_box(&json)).unwrap())
-}
-
-library_benchmark_group!(
-    name = value_indexed_group,
-    benchmarks = [
-        lookup_twitter_indexed,
-        lookup_citm_indexed,
-        encode_value_indexed,
-        value_indexed
-    ]
-);
-
-#[library_benchmark]
-#[bench::twitter(setup = parse_twitter::<Linear>, args = ["twitter.json"])]
-fn lookup_twitter_linear(v: Value<Linear>) -> (usize, Value<Linear>) {
-    (black_box(twitter_lookups(black_box(&v))), v)
-}
-#[library_benchmark]
-#[bench::citm(setup = parse_citm_keys::<Linear>, args = ["citm_catalog.json"])]
-fn lookup_citm_linear(v: (Value<Linear>, Vec<String>)) -> (usize, (Value<Linear>, Vec<String>)) {
-    (black_box(citm_lookups(black_box(&v))), v)
-}
-#[library_benchmark]
-#[benches::corpus(setup = load, args = ["canada.json", "twitter.json", "citm_catalog.json"])]
-fn value_linear(json: String) -> Value<Linear> {
-    black_box(girders_json::parse::<Linear>(black_box(&json)).unwrap())
-}
-#[library_benchmark]
-#[benches::corpus(setup = load, args = ["canada.json", "twitter.json", "citm_catalog.json"])]
-fn value_ordered_all(json: String) -> Value<Ordered> {
-    black_box(girders_json::parse::<Ordered>(black_box(&json)).unwrap())
-}
-
-library_benchmark_group!(
-    name = value_linear_group,
-    benchmarks = [
-        lookup_twitter_linear,
-        lookup_citm_linear,
-        value_linear,
-        value_ordered_all
-    ]
-);
-
-fn parse_key_spans(name: &str) -> String {
-    data(name)
-}
-
-#[library_benchmark]
-#[benches::corpus(setup = parse_key_spans, args = ["canada.json", "twitter.json", "citm_catalog.json"])]
-fn value_ordered_key_spans(json: String) -> Value<Ordered> {
-    black_box(
-        girders_json::decode_with(
-            black_box(&json),
-            &value::<Ordered>(),
-            DecodeOptions::new().key_spans(true),
-        )
-        .unwrap(),
-    )
-}
-
-library_benchmark_group!(
-    name = value_key_spans_group,
-    benchmarks = [value_ordered_key_spans]
 );
 
 // -- CBOR: the same typed models in a binary format -----------------------------------
@@ -683,9 +524,6 @@ main!(
         streaming,
         dyn_dispatch,
         value_ops,
-        value_indexed_group,
-        value_linear_group,
-        value_key_spans_group,
         cbor
     ]
 );

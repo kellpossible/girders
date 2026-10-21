@@ -1,12 +1,12 @@
 fn main() {
     use std::mem::size_of;
     println!(
-        "girders Value<Ordered>: {}",
-        size_of::<girders_json::Value<girders_json::Ordered>>()
+        "girders Value:          {}",
+        size_of::<girders_json::Value>()
     );
     println!(
-        "girders Node<Ordered>:  {}",
-        size_of::<girders_json::Node<girders_json::Ordered>>()
+        "girders Node:           {}",
+        size_of::<girders_json::Node>()
     );
     println!("girders Number:         {}", size_of::<girders::Number>());
     println!("girders Span:           {}", size_of::<girders::Span>());
@@ -15,7 +15,7 @@ fn main() {
         size_of::<Option<girders::Span>>()
     );
     println!(
-        "ordered Entry:          {}",
+        "object Entry:           {}",
         size_of::<girders_json::value::Entry>()
     );
     println!("serde_json Value:       {}", size_of::<serde_json::Value>());

@@ -3,10 +3,10 @@
 
 use girders::Number;
 use girders::prelude::*;
-use girders_json::{Node, ObjectMap, Ordered, Pointer, StreamDecoder, Value, value};
+use girders_json::{Node, Object, Pointer, StreamDecoder, Value, value};
 use proptest::prelude::*;
 
-fn arb_value() -> impl Strategy<Value = Value<Ordered>> {
+fn arb_value() -> impl Strategy<Value = Value> {
     let leaf = prop_oneof![
         Just(Value::null()),
         any::<bool>().prop_map(Value::bool),
@@ -28,7 +28,7 @@ fn arb_value() -> impl Strategy<Value = Value<Ordered>> {
 trait Normalize {
     fn normalized(self) -> Self;
 }
-impl Normalize for Value<Ordered> {
+impl Normalize for Value {
     /// Small `U64`s parse back as `I64`.
     fn normalized(self) -> Self {
         match self.node {
@@ -69,11 +69,11 @@ fn arb_rec() -> impl Strategy<Value = Rec> {
 proptest! {
     #[test]
     fn value_round_trip(v in arb_value()) {
-        let json = girders_json::encode(&v, &value::<Ordered>());
-        let back: Value<Ordered> = girders_json::parse(&json).unwrap();
+        let json = girders_json::encode(&v, &value());
+        let back: Value = girders_json::parse(&json).unwrap();
         prop_assert_eq!(back.without_spans(), v.clone());
-        let pretty = girders_json::encode_pretty(&v, &value::<Ordered>(), "  ");
-        let back: Value<Ordered> = girders_json::parse(&pretty).unwrap();
+        let pretty = girders_json::encode_pretty(&v, &value(), "  ");
+        let back: Value = girders_json::parse(&pretty).unwrap();
         prop_assert_eq!(back.without_spans(), v);
     }
 
@@ -87,11 +87,11 @@ proptest! {
     /// streaming paths.
     #[test]
     fn streaming_equals_slice(v in arb_value(), chunk in 1usize..40) {
-        let json = girders_json::encode_pretty(&v, &value::<Ordered>(), " ");
-        let a = girders_json::parse::<Ordered>(&json).unwrap();
-        let b = girders_json::from_reader_with(json.as_bytes(), &value::<Ordered>(), DecodeOptions::new(), chunk).unwrap();
+        let json = girders_json::encode_pretty(&v, &value(), " ");
+        let a = girders_json::parse(&json).unwrap();
+        let b = girders_json::from_reader_with(json.as_bytes(), &value(), DecodeOptions::new(), chunk).unwrap();
         prop_assert_eq!(&a, &b);
-        let mut d = StreamDecoder::new(value::<Ordered>());
+        let mut d = StreamDecoder::new(value());
         let mut out = Vec::new();
         for c in json.as_bytes().chunks(chunk) {
             d.push(c);
@@ -106,7 +106,7 @@ proptest! {
     /// the same success/failure outcome.
     #[test]
     fn accumulate_contains_fail_fast(v in arb_value()) {
-        let json = girders_json::encode(&v, &value::<Ordered>());
+        let json = girders_json::encode(&v, &value());
         let c = list(rec());
         let fast = girders_json::decode(&json, &c);
         let all = girders_json::decode_with(&json, &c, DecodeOptions::strict());
@@ -127,7 +127,7 @@ proptest! {
 }
 
 proptest! {
-    /// The indexed `Ordered` map answers lookups exactly like a linear scan
+    /// An indexed `Object` answers lookups exactly like a linear scan
     /// for the last occurrence, around the index threshold and with
     /// duplicate keys, both when parsed and when built with `push`.
     #[test]
@@ -137,8 +137,8 @@ proptest! {
     ) {
         let members: Vec<String> = keys.iter().enumerate().map(|(i, k)| format!("{:?}:{i}", k)).collect();
         let json = format!("{{{}}}", members.join(","));
-        let parsed: Value<Ordered> = girders_json::parse(&json).unwrap();
-        let mut pushed = Ordered::default();
+        let parsed: Value = girders_json::parse(&json).unwrap();
+        let mut pushed = Object::default();
         for (i, k) in keys.iter().enumerate() {
             pushed.push(k.clone(), Value::int(i as i64));
         }

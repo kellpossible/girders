@@ -1,33 +1,29 @@
 //! Example 06: the self-describing `Value` tree.
 //!
-//! For data without a static type, decode into `Value`. The caller picks
-//! the object representation: `Ordered` keeps document order (and
-//! duplicate keys, so re-encoding is lossless), `Sorted` uses a BTreeMap,
-//! `Hashed` a HashMap. Every node carries its span.
+//! For data without a static type, decode into `Value`. Objects keep
+//! document order and duplicate keys, so re-encoding is lossless. Every
+//! node carries its span.
 
-use girders_json::{Ordered, Sorted, Value, value};
+use girders_json::{Value, value};
 
 pub fn top_level_keys(input: &str) -> Result<Vec<String>, girders_json::Error> {
-    let v: Value<Ordered> = girders_json::parse(input)?;
+    let v: Value = girders_json::parse(input)?;
     Ok(v.keys().into_iter().map(String::from).collect())
 }
 
 pub fn reencode(input: &str) -> Result<String, girders_json::Error> {
-    let v: Value<Ordered> = girders_json::parse(input)?;
-    Ok(girders_json::encode(&v, &value::<Ordered>()))
+    let v: Value = girders_json::parse(input)?;
+    Ok(girders_json::encode(&v, &value()))
 }
 
 pub fn pluck(input: &str, key: &str) -> Option<String> {
-    let v: Value<Ordered> = girders_json::parse(input).ok()?;
-    Some(girders_json::encode(v.get(key)?, &value::<Ordered>()))
+    let v: Value = girders_json::parse(input).ok()?;
+    Some(girders_json::encode(v.get(key)?, &value()))
 }
 
 pub fn at(input: &str, pointer: &str) -> Option<String> {
-    let v: Value<Ordered> = girders_json::parse(input).ok()?;
-    Some(girders_json::encode(
-        v.pointer_str(pointer)?,
-        &value::<Ordered>(),
-    ))
+    let v: Value = girders_json::parse(input).ok()?;
+    Some(girders_json::encode(v.pointer_str(pointer)?, &value()))
 }
 
 pub fn main() {
@@ -52,15 +48,13 @@ pub fn main() {
     assert_eq!(at(doc, "/name").unwrap(), r#""prod""#);
     assert_eq!(at(r#"{"a":1}"#, "/a/b"), None);
 
-    // Sorted: keys come back in order.
-    let sorted: Value<Sorted> = girders_json::parse(r#"{"z":1,"a":2}"#).unwrap();
-    assert_eq!(
-        girders_json::encode(&sorted, &value::<Sorted>()),
-        r#"{"a":2,"z":1}"#
-    );
+    // Duplicate keys survive a round trip; lookups see the last one.
+    let dup: Value = girders_json::parse(r#"{"a":1,"a":2}"#).unwrap();
+    assert_eq!(girders_json::encode(&dup, &value()), r#"{"a":1,"a":2}"#);
+    assert_eq!(girders_json::encode(dup.get("a").unwrap(), &value()), "2");
 
     // Spans point back into the source.
-    let v: Value<Ordered> = girders_json::parse(r#"{"k": [1, 2]}"#).unwrap();
+    let v: Value = girders_json::parse(r#"{"k": [1, 2]}"#).unwrap();
     assert_eq!(
         v.get("k").unwrap().span.map(|s| (s.start(), s.end())),
         Some((6, 12))

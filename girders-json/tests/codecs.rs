@@ -1,7 +1,7 @@
 //! Behaviour tests for the core combinators, through the JSON format.
 
 use girders::prelude::*;
-use girders_json::{Ordered, StreamDecoder, Value, diagnostic, value};
+use girders_json::{StreamDecoder, Value, diagnostic, value};
 
 fn dec<C: Decoder>(c: &C, s: &str) -> Result<C::Output, girders_json::Error> {
     girders_json::decode(s, c)
@@ -110,14 +110,14 @@ fn allow_unknown_skips_any_value() {
 #[derive(Debug, PartialEq)]
 struct Open {
     name: String,
-    rest: Vec<(String, Value<Ordered>)>,
+    rest: Vec<(String, Value)>,
 }
 
 #[test]
 fn extras_collects_unknown_keys() {
     let c = record((
         field("name", string(), |o: &Open| &o.name),
-        extras(value::<Ordered>(), |o: &Open| &o.rest),
+        extras(value(), |o: &Open| &o.rest),
     ))
     .build(|(name, rest)| Open { name, rest });
     let input = r#"{"a":1,"name":"n","b":[true]}"#;
@@ -249,13 +249,9 @@ fn accumulate_stops_at_syntax_errors() {
 #[test]
 fn depth_limit() {
     let deep = "[".repeat(200) + &"]".repeat(200);
-    let e = girders_json::parse::<Ordered>(&deep).unwrap_err();
+    let e = girders_json::parse(&deep).unwrap_err();
     assert_eq!(e.problem(), &Problem::DepthLimitExceeded(128));
-    let ok = girders_json::decode_with(
-        &deep,
-        &value::<Ordered>(),
-        DecodeOptions::new().max_depth(Some(300)),
-    );
+    let ok = girders_json::decode_with(&deep, &value(), DecodeOptions::new().max_depth(Some(300)));
     assert!(ok.is_ok());
 }
 
@@ -685,29 +681,25 @@ fn diagnostics() {
 
 #[test]
 fn pretty_snapshots() {
-    let v: Value<Ordered> =
+    let v: Value =
         girders_json::parse(r#"{"name":"prod","ports":[8080,9090],"meta":{"tls":true},"tags":[]}"#)
             .unwrap();
     insta::assert_snapshot!(
         "pretty_nested_object",
-        girders_json::encode_pretty(&v, &value::<Ordered>(), "  ")
+        girders_json::encode_pretty(&v, &value(), "  ")
     );
-    let v: Value<Ordered> = girders_json::parse(r#"[1,[2,3],{"k":4},{},[]]"#).unwrap();
+    let v: Value = girders_json::parse(r#"[1,[2,3],{"k":4},{},[]]"#).unwrap();
     insta::assert_snapshot!(
         "pretty_top_level_array",
-        girders_json::encode_pretty(&v, &value::<Ordered>(), "  ")
+        girders_json::encode_pretty(&v, &value(), "  ")
     );
 }
 
 #[test]
 fn key_spans_only_when_requested() {
     let src = r#"{"a": 1, "bee": {"c": [true]}}"#;
-    let v: Value<Ordered> = girders_json::decode_with(
-        src,
-        &value::<Ordered>(),
-        DecodeOptions::new().key_spans(true),
-    )
-    .unwrap();
+    let v: Value =
+        girders_json::decode_with(src, &value(), DecodeOptions::new().key_spans(true)).unwrap();
     let girders_json::Node::Object(m) = &v.node else {
         panic!()
     };
@@ -721,7 +713,7 @@ fn key_spans_only_when_requested() {
     };
     assert_eq!(span_text(inner.key_span(0).unwrap()), "\"c\"");
 
-    let off: Value<Ordered> = girders_json::parse(src).unwrap();
+    let off: Value = girders_json::parse(src).unwrap();
     let girders_json::Node::Object(m) = &off.node else {
         panic!()
     };

@@ -257,7 +257,6 @@ dependencies = [
  "girders-cbor",
  "girders-json",
  "gungraun",
- "indexmap",
  "serde",
  "serde_json",
 ]

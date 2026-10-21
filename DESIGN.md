@@ -130,7 +130,7 @@ girder-rs/                    (directory name unchanged)
       source.rs               re-exports girders::source
       reader.rs               impl Reader for JsonReader<S>
       serializer.rs           compact / pretty, over io::Write or Vec<u8>
-      value.rs                Value<M>, ObjectMap trait, OrderedMap
+      value.rs                Value, Node, Object (document order, indexed past 64 entries)
       pointer.rs              RFC 6901
       diagnostic.rs           line/col resolution, caret rendering
       schema.rs               SchemaNode -> JSON Schema emitter
@@ -782,30 +782,28 @@ girders_json::parse::<M>(input) -> Result<Value<M>, …>
 girders_json::schema(&codec, Draft) -> Value
 ```
 
-### 9.3 `Value`: the caller picks the object representation
+### 9.3 `Value`
 
 ```rust
-pub struct Value<M: ObjectMap = Ordered> { pub node: Node<M>, pub span: Option<Span> }
-pub enum Node<M> { Null, Bool(bool), Number(Number), String(String), Array(Vec<Value<M>>), Object(M) }
-pub enum Number { I64(i64), U64(u64), F64(f64), Text(String) } // Text: ints that don't fit
-pub trait ObjectMap { /* from_entries, get, iter, insert, len */ }
+pub struct Value { pub node: Node, pub span: Option<Span> }
+pub enum Node { Null, Bool(bool), Number(Number), String(String), Array(Vec<Value>), Object(Object) }
+pub enum Number { I64(i64), U64(u64), F64(f64), BigInt(String) } // BigInt: integers that don't fit
 ```
 
-The `ObjectMap` implementations are all std-only:
+`Value` is not generic: there is one object representation. An earlier
+version took a type parameter for it (document order, `BTreeMap` or
+`HashMap`, through an `ObjectMap` trait). The measurements chose the
+ordered one (RESULTS.md, "`Value` object maps"), and the parameter was
+removed to keep the type simple.
 
-| Type | Key order | Lookup | Notes |
-|---|---|---|---|
-| `Ordered` (default) | input order | linear | Our own `Vec<(Spanned<String>, Value)>`. Keeps key spans and preserves order on round trips. Matches Gleam's internal OrderedMap. |
-| `Sorted` = `BTreeMap<String, Value>` | sorted | log n | Deterministic output. |
-| `Hashed` = `HashMap<String, Value>` | none | O(1) | Fastest lookup. |
-
-The type is chosen when parsing: `parse::<Hashed>(input)`, or
-`value_codec::<Sorted>()`. Changing the map later is an explicit
-conversion. Duplicate keys in `Value` parsing follow the duplicate-key
-policy decided in Q9.
-
-[OPEN Q11] Does `Ordered` need a hash index for large objects, built
-past some size threshold? Recommendation: no for v1. We measure first.
+- **`Object`:** entries in document order with duplicates kept, so
+  re-encoding is lossless and lookups take the last occurrence.
+  - Small objects are scanned linearly.
+  - Objects with more than 64 entries also get a sorted index of
+    positions, for O(log n) lookups with no hashing.
+  - Key spans are kept in an optional side table, only when
+    `DecodeOptions::key_spans` is on.
+- `Value::without_spans()` is for comparing trees structurally.
 
 ### 9.4 JSON Pointer
 
@@ -1021,8 +1019,7 @@ and serde_json side by side.
    commit. [TODO: confirm the licence of each data file before
    committing any.]
 2. Encoding typed structs, compact and pretty.
-3. Parsing to `Value`: `Ordered`, `Sorted` and `Hashed` compared with
-   `serde_json::Value`.
+3. Parsing to `Value`, compared with `serde_json::Value`.
 4. girders' own options: spans on vs off, paths on vs off, fail-fast vs
    accumulate.
 5. Streaming: `from_reader` vs slice, and the push feeder at several
@@ -1113,9 +1110,9 @@ These were implemented as recommended, and the evidence supports them.
 | V6 | Writing old versions | Still out of scope. |
 | ~~Q3~~ | Codec representation | **Decided: compact only.** Generic combinator types, with child codecs called through the never-inlined `decode_child`. Records use one shared key loop with index dispatch. JSON entry points pass the reader as a `dyn Reader`. Compared with the removed inline mode: decode is 6–14% slower; release builds of a codec-heavy crate are ~40% faster; binaries are 14–18% smaller than serde's (ESP32-C3 `opt-level = "s"`, x86). |
 | Q6 | Push decoder restarting per top-level value | One 632 KB document in ten 64 KB chunks costs 5.7× (restarts are O(k·n)). NDJSON-sized values are unaffected. Accept and document, or require `from_reader` for large single documents? |
-| Q9 | Duplicate keys | Records default to `Duplicates::Error`, with `FirstWins` and `LastWins`. `Value` must accept duplicates (JSONTestSuite `y_object_duplicated_key`): `Ordered` keeps both (lossless, lookups take the last), `Sorted` and `Hashed` keep the last. Confirm? |
+| Q9 | Duplicate keys | Records default to `Duplicates::Error`, with `FirstWins` and `LastWins`. `Value` must accept duplicates (JSONTestSuite `y_object_duplicated_key`): objects keep both (lossless, lookups take the last). Typed maps (`btree_map`) follow `Duplicates` like records. Confirm? |
 | Q10 | `shape_dispatch` | Not built. `one_of` covers untagged cases. |
-| Q11 | Hash index for `Ordered` | Lookup cost not measured. Parsing into `Ordered` is cheapest (twitter: 19.6 M vs 25.2 M Sorted, 27.2 M Hashed). |
+| ~~Q11~~ | Hash index for objects | **Done:** objects past 64 entries get a sorted position index (no hashing). `Value` is no longer generic over the object representation. |
 | Q12 | jj, and the git ownership warning | Unchanged. Nothing is committed. |
 | N1 | Union `Payload` for struct-like variants | `Pick2::Variant0(x.into())` borrows; `Payload::Owned((w, h))` builds the payload. Every arm needs `.into()` (§6.6 changed). Accept, or allow only newtype variants? |
 | ~~N2~~ | Wide records | **Decided: tuple records, cap 16, `.build(|(a, b, …)| …)`.** Alternatives were spiked and rejected, with the numbers in RESULTS.md ("Record styles"): typed keys (`v.take(id.key)`) read well but cost about 30% more in debug builds; dropping `.key` as well (`v.take(id)`) needs `Copy` codecs and stores each codec twice, costing +45% in release; a `record!` macro_rules front end costs 3–7% and was removed (no macros); raising the cap costs +1 s (32) or +3.7 s (64) on every clean library build; right-nested tuples break rustfmt. Tuples have the best compile and run time, stay readable, and models are expected to be written with an LLM anyway. Side results kept: field codecs no longer go through a wrapper; per-field constants are associated consts; per-field method bodies live in helpers shared per value type. |
@@ -1166,9 +1163,9 @@ Each item points back to the section of this document it changes.
     no checkpoint is outstanding.
   - `skip_value` is iterative, so arbitrarily deep input never overflows
     the stack.
-- **§9.3 (`Value`):** `Ordered` keeps duplicate keys (lookups take the
-  last). `Sorted` and `Hashed` keep the last value. `Value::without_spans()`
-  is there for structural comparison.
+- **§9.3 (`Value`):** one object representation, keeping duplicate keys
+  (lookups take the last). `Value::without_spans()` is there for
+  structural comparison.
 - **§7 (schema):**
   - `Tagging::{Untagged, Version { default }}`.
   - `SchemaMode::{Read, Write}`.

@@ -299,8 +299,8 @@ fn bignums_beyond_i128_stay_tagged_and_round_trip() {
 #[test]
 fn json_values_round_trip_through_cbor() {
     let json = r#"{"name":"水","n":[1,-2,18446744073709551615,1.5,1e300],"ok":true,"none":null,"nested":{"a":[]}}"#;
-    let v = girders_json::parse::<girders_json::Ordered>(json).unwrap();
-    let codec = girders_json::value::<girders_json::Ordered>();
+    let v = girders_json::parse(json).unwrap();
+    let codec = girders_json::value();
     let bytes = encode(&v, &codec);
     let back = decode(&bytes, &codec).unwrap();
     assert_eq!(girders_json::encode(&back, &codec), json);

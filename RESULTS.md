@@ -381,6 +381,11 @@ the values into the struct.
 
 ## `Value` object maps
 
+*Historical: these measurements chose the ordered representation, and
+`Value` has since lost its type parameter; only that representation
+remains (DESIGN.md §9.3). The benchmarks for the alternatives were
+removed with it.*
+
 `Ordered` is the default. It is a `Vec` in document order and keeps
 duplicate keys. Objects with more than 64 entries also get a sorted
 index of positions, so lookups there are binary searches: O(log n),

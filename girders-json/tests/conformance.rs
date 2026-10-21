@@ -3,7 +3,7 @@
 //! `io::Read` source at several chunk sizes, and the push decoder.
 
 use girders::DecodeOptions;
-use girders_json::{Ordered, StreamDecoder, Value, value};
+use girders_json::{StreamDecoder, Value, value};
 use std::path::PathBuf;
 
 const COMMIT: &str = "1ef36fa01286573e846ac449e8683f8833c5b26a";
@@ -34,24 +34,24 @@ fn suite() -> Option<Vec<(String, Vec<u8>)>> {
     Some(files)
 }
 
-type Parse = fn(&[u8]) -> Result<Value<Ordered>, String>;
-type ParseFn = dyn Fn(&[u8]) -> Result<Value<Ordered>, String>;
+type Parse = fn(&[u8]) -> Result<Value, String>;
+type ParseFn = dyn Fn(&[u8]) -> Result<Value, String>;
 
-fn via_slice(b: &[u8]) -> Result<Value<Ordered>, String> {
-    girders_json::decode_bytes(b, &value::<Ordered>()).map_err(|e| e.to_string())
+fn via_slice(b: &[u8]) -> Result<Value, String> {
+    girders_json::decode_bytes(b, &value()).map_err(|e| e.to_string())
 }
 
-fn via_reader(chunk: usize) -> impl Fn(&[u8]) -> Result<Value<Ordered>, String> {
+fn via_reader(chunk: usize) -> impl Fn(&[u8]) -> Result<Value, String> {
     move |b| {
-        girders_json::from_reader_with(b, &value::<Ordered>(), DecodeOptions::new(), chunk)
+        girders_json::from_reader_with(b, &value(), DecodeOptions::new(), chunk)
             .map_err(|e| e.to_string())
     }
 }
 
 /// Push decoder, fed `chunk` bytes at a time; exactly one value expected.
-fn via_push(chunk: usize) -> impl Fn(&[u8]) -> Result<Value<Ordered>, String> {
+fn via_push(chunk: usize) -> impl Fn(&[u8]) -> Result<Value, String> {
     move |b| {
-        let mut d = StreamDecoder::new(value::<Ordered>());
+        let mut d = StreamDecoder::new(value());
         let mut out = Vec::new();
         for c in b.chunks(chunk.max(1)) {
             d.push(c);

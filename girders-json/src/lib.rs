@@ -36,9 +36,7 @@ pub use reader::JsonReader;
 pub use serializer::{EncodeError, JsonSerializer, Style};
 pub use source::{PushSource, SliceSource, Source};
 pub use stream::StreamDecoder;
-#[cfg(feature = "std")]
-pub use value::Hashed;
-pub use value::{Node, ObjectMap, Ordered, Sorted, Value, value};
+pub use value::{Entry, Node, Object, Value, value};
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -122,9 +120,9 @@ pub fn from_reader_with<R: std::io::Read, C: Decoder + ?Sized>(
     )
 }
 
-/// Parse into a `Value` with the chosen object representation.
-pub fn parse<M: ObjectMap>(input: &str) -> Result<Value<M>, Error> {
-    decode(input, &value::<M>())
+/// Parse into a `Value`.
+pub fn parse(input: &str) -> Result<Value, Error> {
+    decode(input, &value())
 }
 
 /// Encode to bytes in the given style. Fails only for non-finite floats.
