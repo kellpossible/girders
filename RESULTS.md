@@ -40,16 +40,25 @@ Ratios are girders ÷ serde_json; lower is better.
 
 | Benchmark | serde_json | girders | ratio |
 |---|---:|---:|---:|
-| decode canada (number-heavy) | 55.8 M | 102.2 M | 1.83 |
-| decode citm | 26.5 M | 34.2 M | 1.29 |
-| decode twitter (string/key-heavy) | 8.98 M | 16.9 M | 1.88 |
-| encode canada | 22.4 M | 102.4 M | **4.58** |
-| encode citm | 5.79 M | 10.95 M | 1.89 |
-| encode twitter | 6.43 M | 10.38 M | 1.61 |
-| `Value` canada (Ordered) | 83.4 M | 129.6 M | 1.55 |
-| `Value` twitter (Ordered) | 17.5 M | 19.6 M | 1.12 |
-| `Value` twitter (Sorted / Hashed) | 17.5 M | 25.2 M / 27.2 M | 1.44 / 1.55 |
-| twitter from `io::Read` | 25.7 M (`from_reader` + BufReader) | 20.6 M (4 KB chunks) | **0.80** |
+| decode canada (number-heavy) | 55.8 M | 115.3 M | 2.06 |
+| decode citm | 26.5 M | 42.2 M | 1.59 |
+| decode twitter (string/key-heavy) | 8.98 M | 18.1 M | 2.01 |
+| encode canada | 22.4 M | 103.5 M | **4.63** |
+| encode citm | 7.19 M | 11.1 M | 1.55 |
+| encode twitter | 6.43 M | 10.4 M | 1.62 |
+| `Value` canada | 84.1 M | 150.8 M | 1.79 |
+| `Value` citm | 42.9 M | 51.0 M | 1.19 |
+| `Value` twitter | 18.6 M | 21.2 M | 1.14 |
+| twitter from `io::Read` | 25.7 M (`from_reader` + BufReader) | 21.2 M (4 KB chunks) | **0.82** |
+
+Refreshed on 2026-10-21. The first version of this table (decode canada
+102.2 M, citm 34.2 M, twitter 16.9 M; `Value` canada 129.6 M) predates
+later code changes and was never re-measured. By the first commit in
+version control, decode was already at today's figures, so the increase
+came from changes made before then (the record-style experiments), not
+from CBOR or the later changes. Differences of a few percent between
+builds are noise: rebuilding the bench binary moves serde_json's own
+numbers by 1–4%.
 
 Where the gap comes from:
 
